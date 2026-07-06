@@ -22,8 +22,8 @@ import tempfile
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT
 
-UPDATE_REPO_OWNER = "your-github-username"
-UPDATE_REPO_NAME = "pios"
+UPDATE_REPO_OWNER = "kd1211"
+UPDATE_REPO_NAME = "Kos"
 UPDATE_REPO_BRANCH = "main"
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
