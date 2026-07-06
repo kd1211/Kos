@@ -54,11 +54,16 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
 - `drivers/touch_ft6336u.py` — I2C driver for the FT6336U touch controller.
 - `drivers/ina219_battery.py` — I2C driver for the INA219 fuel gauge on the
   UPS HAT (C), reporting voltage, current, power and estimated battery %.
-- `ui/framework.py` — the "OS": a status bar (clock + live battery icon),
-  an `App` base class (tap, drag, and release hooks), a shared
-  auto-scaling grid layout (`build_grid`) used by both Home and folders,
-  a `FolderView` class, a `Keyboard` widget (on-screen QWERTY for any app
-  that needs typed text), and a sleep/wake power-saving mode.
+- `ui/framework.py` — the "OS": a status bar (clock + live battery icon,
+  a DEV tag when Developer Mode is on), a PIN-lock screen shown on
+  wake/boot, an `App` base class (tap, drag, and release hooks), a
+  shared auto-scaling grid layout (`build_grid`) used by folders, a
+  `FolderView` class, a `Keyboard` widget (on-screen QWERTY for any app
+  that needs typed text), a `ScrollArea` helper (drag-to-scroll lists,
+  used by Settings and File Browser), and a sleep/wake power-saving mode.
+- `ui/wallpaper.py` — renders the Home screen background: a few built-in
+  gradients, a photo picked from `~/Pictures`, or none (solid theme
+  color), cached so a photo wallpaper isn't re-decoded every frame.
 - `emulators/chip8.py` — a full CHIP-8 interpreter (all standard
   opcodes). CHIP-8 was chosen deliberately: it needs almost no CPU, so
   it actually runs well on a Pi Zero-class board, and there's a large
@@ -71,13 +76,19 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
 - `apps/` — organized into a flat Home screen plus two folders:
 
   **On the Home screen directly:**
-  - **Home** — the launcher (auto-scaling icon grid, plus folder icons)
+  - **Home** — multiple pages of icons (swipe left/right, page dots at
+    the bottom), an optional wallpaper (set in Settings), and an "Edit"
+    mode for rearranging: drag an icon to reorder it, drag it to the
+    screen edge to carry it onto the next/previous page, or tap it (in
+    Edit mode) for a small Open/Uninstall info sheet
   - **Clock** — live time and date
   - **Battery** — live voltage/current/power/percent from the UPS HAT
-  - **Settings** — Display, Sound, Theme, Wi-Fi & Bluetooth toggles, a PIN
-    lock (enforced by a numeric-keypad lock screen the OS shows on
-    wake/boot), Date & Time, Installed Apps management, Developer Mode
-    (adds a "DEV" tag to the status bar), and About/reset
+  - **Settings** — Display, Sound, Theme, Wallpaper (gradients or a
+    Pictures photo), Wi-Fi & Bluetooth toggles, a PIN lock (enforced by
+    a numeric-keypad lock screen the OS shows on wake/boot), Date &
+    Time, Installed Apps management, Developer Mode (adds a "DEV" tag to
+    the status bar), and About/reset. The menu and any long list here
+    scroll by dragging, the same as File Browser.
   - **Paint** — finger-drag drawing with a color palette, eraser, four
     brush sizes, multi-step undo, and one-tap "Save" into the Gallery's
     Pictures folder
@@ -91,13 +102,14 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
 
   **Inside the "Tools" folder:**
   - **Calculator**, **Notes**
-  - **File Browser** — navigate the filesystem, paginated, with an "Up"
-    button. Tapping a file opens an action bar to Open / Copy / Move /
-    Delete (copy/move stash a clipboard, then "Paste" appears once you
-    browse to the destination folder). Opening a file routes it to the
-    right app — images to Gallery, everything else to Text Editor — and
-    tapping a `.phoneapp` file installs it as a new app on the spot,
-    using the same single-file install path as the App Store.
+  - **File Browser** — navigate the filesystem as a drag-to-scroll list
+    (no more "page 2/5" buttons), with an "Up" button. Tapping a file
+    opens an action bar to Open / Copy / Move / Delete (copy/move stash
+    a clipboard, then "Paste" appears once you browse to the destination
+    folder). Opening a file routes it to the right app — images to
+    Gallery, everything else to Text Editor — and tapping a `.phoneapp`
+    file installs it as a new app on the spot, using the same
+    single-file install path as the App Store.
   - **Calendar** — month grid, prev/next navigation, quick-add events per day
   - **Weather** — current conditions for a few preset cities via the free
     Open-Meteo API (no key needed) -- requires internet and `pip install requests`
