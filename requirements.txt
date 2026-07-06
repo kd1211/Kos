@@ -1,0 +1,7 @@
+spidev
+RPi.GPIO
+smbus2
+pillow
+numpy
+requests
+pygame
