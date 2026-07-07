@@ -62,7 +62,6 @@ def main():
     os_.register_app(PaintApp)
     os_.register_app(FlashlightApp)
     os_.register_app(AppStoreApp)
-    os_.register_app(RebootApp)
   
     # Apps that live inside folders
     os_.register_app(CalculatorApp)
@@ -86,7 +85,8 @@ def main():
     os_.register_app(SnakeApp)
     os_.register_app(Game2048App)
     os_.register_app(BreakoutApp)
-
+    os_.register_app(RebootApp)
+  
     # Group related apps into folders on the Home screen
     os_.register_folder("Games", ["TicTacToe", "Memory", "Reaction", "RetroArch",
                                    "Snake", "2048", "Breakout"],
@@ -94,7 +94,7 @@ def main():
     os_.register_folder("Tools", ["Calculator", "Notes", "TextEditor", "FileBrowser",
                                    "Calendar", "Weather", "Browser", "System",
                                    "Terminal", "Gallery", "Messages",
-                                   "System Updater", "Calibrate Touch"],
+                                   "System Updater", "Calibrate Touch", "Reboot"],
                          icon="\U0001F4C1")
 
     # Re-register any apps previously installed from the App Store so they
