@@ -42,6 +42,7 @@ from apps.calibrate_touch_app import CalibrateTouchApp
 from apps.snake_app import SnakeApp
 from apps.game2048_app import Game2048App
 from apps.breakout_app import BreakoutApp
+from apps.reboot_app import RebootApp
 
 
 def main():
@@ -61,7 +62,8 @@ def main():
     os_.register_app(PaintApp)
     os_.register_app(FlashlightApp)
     os_.register_app(AppStoreApp)
-
+    os_.register_app(RebootApp)
+  
     # Apps that live inside folders
     os_.register_app(CalculatorApp)
     os_.register_app(NotesApp)
