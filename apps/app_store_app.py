@@ -1,5 +1,5 @@
 """
-App Store -- browses and installs single-file PiOS apps from a GitHub repo.
+App Store -- browses and installs PiOS apps from a GitHub repo.
 
 --------------------------------------------------------------------------
 SETTING UP YOUR OWN STORE REPO
@@ -7,6 +7,7 @@ SETTING UP YOUR OWN STORE REPO
 Point STORE_REPO_OWNER / STORE_REPO_NAME / STORE_REPO_BRANCH below at any
 public GitHub repo. That repo needs one file, `apps.json`, at its root:
 
+Single-file app:
 [
   {
     "name": "Dice",
@@ -17,23 +18,38 @@ public GitHub repo. That repo needs one file, `apps.json`, at its root:
   }
 ]
 
-- "file" is the path (relative to the repo root) to a single-file app
-  written the same way as anything in this project's apps/ folder: a
-  module that defines a class inheriting from ui.framework.App.
-- "class_name" is optional -- if omitted, the Store just uses the first
-  App subclass it finds in the file.
+Folder package (images, helper modules, etc.):
+[
+  {
+    "name": "Slots",
+    "class_name": "SlotsApp",
+    "icon": "\\U0001f3b0",
+    "description": "Spin the reels",
+    "folder": "slots",
+    "file": "slots_app.py"
+  }
+]
 
-Tapping "Install" downloads that file into apps/installed/, imports it,
-and registers it live so it shows up on the Home screen immediately. The
-choice is remembered in ~/.pios_installed_apps.json so it's restored
-automatically on the next boot (see load_installed_apps() below, which
-main.py calls at startup).
+- "file" is the main module inside the package (or the only file for
+  single-file apps). It must define a class inheriting from ui.framework.App.
+- "folder" (optional) names a directory in the repo. The whole folder is
+  downloaded into apps/installed/<folder>/ so the app can ship assets and
+  extra .py modules. Without "folder", only the single "file" is fetched.
+- "files" (optional) is an explicit list of repo paths to download when
+  you don't want to rely on the GitHub API to enumerate a folder.
+- "class_name" is optional -- if omitted, the Store uses the first App
+  subclass it finds in the main file.
+
+Installs are remembered in ~/.pios_installed_apps.json and restored on boot
+via load_installed_apps() in main.py.
 --------------------------------------------------------------------------
 """
 
 import os
 import json
+import shutil
 import importlib.util
+import sys
 
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT
@@ -48,11 +64,18 @@ INSTALL_DIR = os.path.join(
 REGISTRY_FILE = os.path.expanduser("~/.pios_installed_apps.json")
 
 ROW_H = 64
+_HTTP_HEADERS = {"User-Agent": "PiOS/1.0"}
 
 
 def _raw_url(path):
     return (f"https://raw.githubusercontent.com/{STORE_REPO_OWNER}/"
             f"{STORE_REPO_NAME}/{STORE_REPO_BRANCH}/{path}")
+
+
+def _api_url(path):
+    base = f"https://api.github.com/repos/{STORE_REPO_OWNER}/{STORE_REPO_NAME}/contents"
+    url = f"{base}/{path}?ref={STORE_REPO_BRANCH}"
+    return url
 
 
 def _load_registry():
@@ -70,8 +93,40 @@ def _save_registry(entries):
         json.dump(entries, f)
 
 
+def entry_key(entry):
+    """Stable id for matching store manifest rows to installed registry rows."""
+    return entry.get("folder") or entry.get("file")
+
+
+def installed_main_path(entry):
+    """Absolute path to the installed app's main .py module."""
+    main_file = entry.get("file")
+    if not main_file:
+        raise ValueError("Registry entry missing file")
+    if entry.get("folder"):
+        return os.path.join(INSTALL_DIR, entry["folder"], main_file)
+    return os.path.join(INSTALL_DIR, os.path.basename(main_file))
+
+
+def remove_installed(entry):
+    """Delete an installed app from disk (single file or whole folder)."""
+    if entry.get("folder"):
+        path = os.path.join(INSTALL_DIR, entry["folder"])
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        return
+    path = os.path.join(INSTALL_DIR, entry.get("file", ""))
+    if os.path.isfile(path):
+        os.remove(path)
+
+
 def _import_app_class(filepath, class_name=None):
-    """Load a single-file app module from disk and return its App subclass."""
+    """Load an app module from disk and return its App subclass."""
+    filepath = os.path.abspath(filepath)
+    pkg_dir = os.path.dirname(filepath)
+    if pkg_dir and pkg_dir not in sys.path:
+        sys.path.insert(0, pkg_dir)
+
     mod_name = "pios_installed_" + os.path.splitext(os.path.basename(filepath))[0]
     spec = importlib.util.spec_from_file_location(mod_name, filepath)
     module = importlib.util.module_from_spec(spec)
@@ -84,6 +139,109 @@ def _import_app_class(filepath, class_name=None):
     raise ValueError("No App subclass found in " + filepath)
 
 
+def _download_text(url, timeout=12):
+    import requests
+    resp = requests.get(url, timeout=timeout, headers=_HTTP_HEADERS)
+    resp.raise_for_status()
+    return resp.text
+
+
+def _download_bytes(url, timeout=12):
+    import requests
+    resp = requests.get(url, timeout=timeout, headers=_HTTP_HEADERS)
+    resp.raise_for_status()
+    return resp.content
+
+
+def _write_repo_file(repo_path, local_path):
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    lower = repo_path.lower()
+    if lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ch8", ".zip")):
+        data = _download_bytes(_raw_url(repo_path))
+        with open(local_path, "wb") as f:
+            f.write(data)
+    else:
+        text = _download_text(_raw_url(repo_path))
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+
+def _download_folder_tree(repo_folder, local_dir):
+    """Recursively download every file under repo_folder via the GitHub API."""
+    import requests
+    resp = requests.get(_api_url(repo_folder), timeout=12, headers=_HTTP_HEADERS)
+    resp.raise_for_status()
+    for item in resp.json():
+        name = item["name"]
+        if item["type"] == "file":
+            repo_path = item["path"]
+            _write_repo_file(repo_path, os.path.join(local_dir, name))
+        elif item["type"] == "dir":
+            _download_folder_tree(item["path"], os.path.join(local_dir, name))
+
+
+def download_store_package(entry):
+    """Fetch a store entry into apps/installed/. Returns local main .py path."""
+    os.makedirs(INSTALL_DIR, exist_ok=True)
+    folder = entry.get("folder")
+    main_file = entry.get("file")
+    if not main_file:
+        raise ValueError("Store entry missing file")
+
+    if folder:
+        local_dir = os.path.join(INSTALL_DIR, folder)
+        if os.path.isdir(local_dir):
+            shutil.rmtree(local_dir)
+        os.makedirs(local_dir, exist_ok=True)
+
+        explicit = entry.get("files")
+        if explicit:
+            for repo_path in explicit:
+                rel = repo_path
+                prefix = folder + "/"
+                if rel.startswith(prefix):
+                    rel = rel[len(prefix):]
+                elif rel.startswith(folder + os.sep):
+                    rel = rel[len(folder) + 1:]
+                _write_repo_file(repo_path, os.path.join(local_dir, rel.replace("/", os.sep)))
+        else:
+            _download_folder_tree(folder, local_dir)
+
+        local_path = os.path.join(local_dir, main_file)
+    else:
+        local_name = os.path.basename(main_file)
+        local_path = os.path.join(INSTALL_DIR, local_name)
+        _write_repo_file(main_file, local_path)
+
+    if not os.path.isfile(local_path):
+        raise FileNotFoundError("Main module not found after download: " + local_path)
+    return local_path
+
+
+def registry_row_for(cls, store_entry):
+    row = {
+        "class_name": cls.__name__,
+        "app_name": cls.name,
+        "file": store_entry.get("file") or "app.py",
+    }
+    if store_entry.get("folder"):
+        row["folder"] = store_entry["folder"]
+    return row
+
+
+def install_store_entry(os_ref, store_entry):
+    """Download, import, register, and persist one store manifest entry."""
+    local_path = download_store_package(store_entry)
+    cls = _import_app_class(local_path, store_entry.get("class_name"))
+    os_ref.register_app(cls)
+
+    key = entry_key(store_entry)
+    registry = [e for e in _load_registry() if entry_key(e) != key]
+    registry.append(registry_row_for(cls, store_entry))
+    _save_registry(registry)
+    return cls
+
+
 def load_installed_apps(os_ref):
     """Called once at boot (from main.py) to re-register apps that were
     installed from the Store in a previous session. Failures for any one
@@ -91,7 +249,7 @@ def load_installed_apps(os_ref):
     os.makedirs(INSTALL_DIR, exist_ok=True)
     for entry in _load_registry():
         try:
-            filepath = os.path.join(INSTALL_DIR, entry["file"])
+            filepath = installed_main_path(entry)
             cls = _import_app_class(filepath, entry.get("class_name"))
             os_ref.register_app(cls)
         except Exception as e:
@@ -120,7 +278,7 @@ class AppStoreApp(App):
             return
         try:
             resp = requests.get(_raw_url(STORE_MANIFEST_PATH), timeout=8,
-                                 headers={"User-Agent": "PiOS/1.0"})
+                                 headers=_HTTP_HEADERS)
             resp.raise_for_status()
             self.entries = resp.json()
             self.state = "list"
@@ -137,25 +295,7 @@ class AppStoreApp(App):
             self.status = "The 'requests' package isn't installed"
             return
         try:
-            file_rel = entry["file"]
-            resp = requests.get(_raw_url(file_rel), timeout=10,
-                                 headers={"User-Agent": "PiOS/1.0"})
-            resp.raise_for_status()
-
-            os.makedirs(INSTALL_DIR, exist_ok=True)
-            local_name = os.path.basename(file_rel)
-            local_path = os.path.join(INSTALL_DIR, local_name)
-            with open(local_path, "w") as f:
-                f.write(resp.text)
-
-            cls = _import_app_class(local_path, entry.get("class_name"))
-            self.os.register_app(cls)
-
-            registry = [e for e in _load_registry() if e.get("file") != local_name]
-            registry.append({"file": local_name, "class_name": cls.__name__,
-                              "app_name": cls.name})
-            _save_registry(registry)
-
+            cls = install_store_entry(self.os, entry)
             self.status = f"Installed {cls.name} - find it on Home"
             self._build_list_buttons()
         except Exception as e:
@@ -163,8 +303,9 @@ class AppStoreApp(App):
 
     # -- helpers ------------------------------------------------------
     def _registered_app_name(self, entry):
+        key = entry_key(entry)
         for r in _load_registry():
-            if r.get("file") == entry.get("file"):
+            if entry_key(r) == key:
                 return r.get("app_name")
         return None
 

@@ -27,7 +27,7 @@ from ui import theme, sound
 from ui.wallpaper import WALLPAPER_CHOICES, GRADIENTS
 from ui.framework import App, Button, ScrollArea, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_MD, FONT_SM, FONT_LG, ACCENT
-from apps.app_store_app import _load_registry, _save_registry, INSTALL_DIR
+from apps.app_store_app import _load_registry, _save_registry, remove_installed, entry_key
 
 TOP = STATUS_BAR_H + 20
 PICTURES_DIR = os.path.expanduser("~/Pictures")
@@ -455,12 +455,10 @@ class SettingsApp(App):
         entry = self._pending_uninstall
         if entry:
             try:
-                filepath = os.path.join(INSTALL_DIR, entry.get("file"))
-                if os.path.exists(filepath):
-                    os.remove(filepath)
+                remove_installed(entry)
             except Exception:
                 pass
-            registry = [e for e in _load_registry() if e.get("file") != entry.get("file")]
+            registry = [e for e in _load_registry() if entry_key(e) != entry_key(entry)]
             _save_registry(registry)
             name = entry.get("app_name")
             if name in self.os.apps:

@@ -15,7 +15,7 @@ import shutil
 from ui.framework import App, Button, ScrollArea, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, CARD_COLOR, ACCENT
 from apps.gallery_app import IMAGE_EXTS
-from apps.app_store_app import _import_app_class, _load_registry, _save_registry, INSTALL_DIR
+from apps.app_store_app import _import_app_class, _load_registry, _save_registry, INSTALL_DIR, entry_key
 
 START_DIR = os.path.expanduser("~")
 ROW_H = 44
@@ -194,7 +194,7 @@ class FileBrowserApp(App):
             cls = _import_app_class(dest)
             self.os.register_app(cls)
 
-            registry = [e for e in _load_registry() if e.get("file") != base]
+            registry = [e for e in _load_registry() if entry_key(e) != base]
             registry.append({"file": base, "class_name": cls.__name__, "app_name": cls.name})
             _save_registry(registry)
 

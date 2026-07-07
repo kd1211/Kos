@@ -29,7 +29,7 @@ from ui import theme
 from ui.wallpaper import get_wallpaper
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_LG, FONT_SM, FONT_MD
-from apps.app_store_app import _load_registry, _save_registry, INSTALL_DIR
+from apps.app_store_app import _load_registry, _save_registry, remove_installed, entry_key
 
 LAYOUT_PATH = os.path.expanduser("~/.pios_home_layout.json")
 ICONS_PER_PAGE = 9      # only used to size the *initial* auto layout
@@ -259,12 +259,10 @@ class Home(App):
         entry = next((e for e in registry if e.get("app_name") == name), None)
         if entry:
             try:
-                filepath = os.path.join(INSTALL_DIR, entry.get("file"))
-                if os.path.exists(filepath):
-                    os.remove(filepath)
+                remove_installed(entry)
             except Exception:
                 pass
-            _save_registry([e for e in registry if e is not entry])
+            _save_registry([e for e in registry if entry_key(e) != entry_key(entry)])
         if name in self.os.apps:
             del self.os.apps[name]
         self.os.folder_members.discard(name)
