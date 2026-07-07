@@ -11,7 +11,7 @@ public GitHub repo. That repo needs one file, `apps.json`, at its root:
   {
     "name": "Dice",
     "class_name": "DiceApp",
-    "icon": "\ud83c\udfb2",
+    "icon": "\\ud83c\\udfb2",
     "description": "Roll a virtual dice",
     "file": "dice_app.py"
   }
@@ -38,8 +38,8 @@ import importlib.util
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT
 
-STORE_REPO_OWNER = "your-github-username"
-STORE_REPO_NAME = "pios-store"
+STORE_REPO_OWNER = "kd1211"
+STORE_REPO_NAME = "Kos-App-Store"
 STORE_REPO_BRANCH = "main"
 STORE_MANIFEST_PATH = "apps.json"
 

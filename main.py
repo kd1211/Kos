@@ -61,7 +61,7 @@ def main():
     os_.register_app(PaintApp)
     os_.register_app(FlashlightApp)
     os_.register_app(AppStoreApp)
-
+  
     # Apps that live inside folders
     os_.register_app(CalculatorApp)
     os_.register_app(NotesApp)
@@ -84,7 +84,7 @@ def main():
     os_.register_app(SnakeApp)
     os_.register_app(Game2048App)
     os_.register_app(BreakoutApp)
-
+  
     # Group related apps into folders on the Home screen
     os_.register_folder("Games", ["TicTacToe", "Memory", "Reaction", "RetroArch",
                                    "Snake", "2048", "Breakout"],
