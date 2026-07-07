@@ -42,7 +42,6 @@ from apps.calibrate_touch_app import CalibrateTouchApp
 from apps.snake_app import SnakeApp
 from apps.game2048_app import Game2048App
 from apps.breakout_app import BreakoutApp
-from apps.reboot_app import RebootApp
 
 
 def main():
@@ -85,7 +84,6 @@ def main():
     os_.register_app(SnakeApp)
     os_.register_app(Game2048App)
     os_.register_app(BreakoutApp)
-    os_.register_app(RebootApp)
   
     # Group related apps into folders on the Home screen
     os_.register_folder("Games", ["TicTacToe", "Memory", "Reaction", "RetroArch",
@@ -94,7 +92,7 @@ def main():
     os_.register_folder("Tools", ["Calculator", "Notes", "TextEditor", "FileBrowser",
                                    "Calendar", "Weather", "Browser", "System",
                                    "Terminal", "Gallery", "Messages",
-                                   "System Updater", "Calibrate Touch", "Reboot"],
+                                   "System Updater", "Calibrate Touch"],
                          icon="\U0001F4C1")
 
     # Re-register any apps previously installed from the App Store so they
