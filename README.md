@@ -60,10 +60,21 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
   shared auto-scaling grid layout (`build_grid`) used by folders, a
   `FolderView` class, a `Keyboard` widget (on-screen QWERTY for any app
   that needs typed text), a `ScrollArea` helper (drag-to-scroll lists,
-  used by Settings and File Browser), and a sleep/wake power-saving mode.
+  used by Settings and File Browser), automatic per-character font
+  fallback (see below), and a sleep/wake power-saving mode.
 - `ui/wallpaper.py` — renders the Home screen background: a few built-in
   gradients, a photo picked from `~/Pictures`, or none (solid theme
   color), cached so a photo wallpaper isn't re-decoded every frame.
+- `assets/fonts/` — DejaVuSans.ttf (all normal text) and Symbola.ttf (a
+  fallback covering the emoji/pictograph glyphs used as app icons --
+  the palette, globe, folder, lock, wallpaper, wifi, etc. -- that DejaVu
+  doesn't have). Both ship *with the repo* rather than relying on
+  whatever fonts happen to be preinstalled on a freshly flashed Pi.
+  `ui/framework.py` picks whichever font actually has each character
+  automatically (even within a single string, like a menu row's
+  "\U0001F5BC  Wallpaper"), using coverage baked offline into
+  `ui/_font_coverage.py` -- no extra Python packages needed at runtime
+  to make this work.
 - `emulators/chip8.py` — a full CHIP-8 interpreter (all standard
   opcodes). CHIP-8 was chosen deliberately: it needs almost no CPU, so
   it actually runs well on a Pi Zero-class board, and there's a large

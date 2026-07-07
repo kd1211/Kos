@@ -1,0 +1,22 @@
+Fonts bundled with PiOS (see ui/framework.py's load_font)
+==========================================================
+
+DejaVuSans.ttf
+--------------
+DejaVu Fonts, based on Bitstream Vera. Used for all normal UI text
+(labels, numbers, Latin punctuation). Public-domain-equivalent license
+allowing unlimited use, modification, and redistribution -- see
+https://dejavu-fonts.github.io/License.html for the full text.
+
+Symbola.ttf
+-----------
+Symbola by George Douros (http://users.teilar.gr/~g1951d/). Used as a
+fallback so the emoji/pictograph characters this OS uses for app icons
+(the palette, globe, folder, lock, wallpaper, wifi, etc.) actually
+render as real glyphs instead of blank "tofu" boxes, on any Pi image
+regardless of what system fonts happen to be installed.
+
+Per the font's own license statement: "Fonts are free for any use; they
+may be opened, edited, modified, regenerated, packaged and
+redistributed." (as packaged in Debian/Ubuntu's fonts-symbola, whose
+copyright file carries the same statement).

@@ -16,15 +16,137 @@ The OS also owns a simple sleep mode (screen + backlight off) to save
 battery on the UPS HAT (C) -- tap anywhere to wake back up.
 """
 
+import os
+import bisect
 import time
 from PIL import Image, ImageDraw, ImageFont
 
 from ui import theme
 from ui import sound
+from ui._font_coverage import DEJAVU_RANGES
 
 SCREEN_W = 320
 SCREEN_H = 480
 STATUS_BAR_H = 28
+
+# -- font loading -----------------------------------------------------------
+# Two fonts ship with the OS (assets/fonts/) so the UI looks and covers
+# Unicode consistently regardless of what's freshly flashed onto the SD
+# card, rather than hoping the right system fonts happen to be installed:
+#   DejaVuSans.ttf -- all normal text (labels, numbers, punctuation)
+#   Symbola.ttf    -- fallback for the emoji/pictograph glyphs used as app
+#                     icons (palette, globe, folder, lock, wifi, ...) that
+#                     DejaVu doesn't have. Every icon glyph this project
+#                     ships with was checked against Symbola at build time
+#                     (see ui/_font_coverage.py for how DejaVu's own
+#                     coverage was baked in) so this fallback should
+#                     essentially never miss for anything in this repo.
+_ASSETS_FONT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+
+
+def _first_existing(paths):
+    for p in paths:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+_PRIMARY_FONT_PATH = _first_existing([
+    os.path.join(_ASSETS_FONT_DIR, "DejaVuSans.ttf"),
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+])
+_SYMBOL_FONT_PATH = _first_existing([
+    os.path.join(_ASSETS_FONT_DIR, "Symbola.ttf"),
+    "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
+    "/usr/share/fonts/truetype/symbola/Symbola.ttf",
+])
+
+_DEJAVU_STARTS = [lo for lo, hi in DEJAVU_RANGES]
+
+
+def _primary_covers(cp):
+    """O(log n) range lookup -- no fontTools needed at runtime, since
+    DejaVu's coverage was precomputed offline into ui/_font_coverage.py."""
+    i = bisect.bisect_right(_DEJAVU_STARTS, cp) - 1
+    if i < 0:
+        return False
+    lo, hi = DEJAVU_RANGES[i]
+    return lo <= cp <= hi
+
+
+_font_file_cache = {}
+
+
+def _font_at(path, size):
+    key = (path, size)
+    if key not in _font_file_cache:
+        try:
+            _font_file_cache[key] = ImageFont.truetype(path, size) if path else None
+        except Exception:
+            _font_file_cache[key] = None
+    return _font_file_cache[key]
+
+
+def load_font(size):
+    f = _font_at(_PRIMARY_FONT_PATH, size)
+    if f is not None:
+        return f
+    return ImageFont.load_default()
+
+
+def _symbol_font(size):
+    return _font_at(_SYMBOL_FONT_PATH, size)
+
+
+# -- transparent per-character font fallback for every draw.text() call -----
+# Rather than touching the ~15 apps that call draw.text() directly, patch
+# the one shared entry point (PIL's ImageDraw.text) so any string mixing
+# ordinary text with an unsupported symbol -- e.g. Settings' menu rows
+# ("\U0001F5BC  Wallpaper"), or the lock screen's "\U0001F512 Enter PIN"
+# -- renders correctly everywhere, automatically, with no per-app changes.
+_orig_text = ImageDraw.ImageDraw.text
+_orig_textlength = ImageDraw.ImageDraw.textlength
+_SUPPORTED_ANCHORS = ("mm", "lm", "rm")
+
+
+def _text_with_fallback(self, xy, text, fill=None, font=None, anchor=None, **kwargs):
+    text = str(text)
+    if (font is None or not hasattr(font, "size") or anchor not in _SUPPORTED_ANCHORS
+            or "\n" in text or _SYMBOL_FONT_PATH is None
+            or all(_primary_covers(ord(ch)) for ch in text)):
+        return _orig_text(self, xy, text, fill=fill, font=font, anchor=anchor, **kwargs)
+
+    size = font.size
+    sym_font = _symbol_font(size) or font
+
+    runs = []
+    cur_font, cur_text = font, ""
+    for ch in text:
+        chosen = font if _primary_covers(ord(ch)) else sym_font
+        if chosen is cur_font:
+            cur_text += ch
+        else:
+            if cur_text:
+                runs.append((cur_font, cur_text))
+            cur_font, cur_text = chosen, ch
+    if cur_text:
+        runs.append((cur_font, cur_text))
+
+    total_w = sum(_orig_textlength(self, t, font=f) for f, t in runs)
+    if anchor[0] == "m":
+        cursor = xy[0] - total_w / 2
+    elif anchor[0] == "r":
+        cursor = xy[0] - total_w
+    else:
+        cursor = xy[0]
+
+    for f, t in runs:
+        _orig_text(self, (cursor, xy[1]), t, fill=fill, font=f, anchor="lm", **kwargs)
+        cursor += _orig_textlength(self, t, font=f)
+
+
+ImageDraw.ImageDraw.text = _text_with_fallback
 
 # These four are seeded from whatever theme was saved on disk at import
 # time, and stay around as sane static defaults for any app/screen that
@@ -39,14 +161,6 @@ CARD_COLOR = theme.card_color()
 
 _UNSET = object()  # sentinel so Button/Keyboard can tell "use live theme"
                     # apart from "an app explicitly passed a color"
-
-
-def load_font(size):
-    try:
-        return ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
-    except IOError:
-        return ImageFont.load_default()
 
 
 FONT_SM = load_font(14)

@@ -21,7 +21,7 @@ BALL_SPEED = 4.2
 
 class BreakoutApp(App):
     name = "Breakout"
-    icon = "\U0001F9F1"
+    icon = "\U0001F532"
 
     def on_open(self):
         self.paddle_x = SCREEN_W // 2 - PADDLE_W // 2
