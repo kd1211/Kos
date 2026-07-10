@@ -24,6 +24,7 @@ class BreakoutApp(App):
     icon = "\U0001F532"
 
     def on_open(self):
+        self.wants_animation = True
         self.paddle_x = SCREEN_W // 2 - PADDLE_W // 2
         self.ball = [SCREEN_W // 2, PADDLE_Y - BALL_R - 2]
         self.vel = [BALL_SPEED * 0.6, -BALL_SPEED]

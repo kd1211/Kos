@@ -16,6 +16,7 @@ class SnakeApp(App):
     icon = "\U0001F40D"
 
     def on_open(self):
+        self.wants_animation = True
         self.snake = [(GRID_W // 2, GRID_H // 2)]
         self.direction = (1, 0)
         self.pending_dir = (1, 0)

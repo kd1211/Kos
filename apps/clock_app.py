@@ -7,6 +7,7 @@ class ClockApp(App):
     icon = "\u23F0"
 
     def on_open(self):
+        self.wants_animation = True
         self.buttons = [
             Button(SCREEN_W // 2 - 60, SCREEN_H - 70, 120, 45,
                    "Home", self.os.go_home)

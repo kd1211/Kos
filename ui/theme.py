@@ -44,8 +44,9 @@ _defaults = {
     "click_sound": True,      # UI tap feedback tone
     "clock_24h": True,        # 24h vs 12h clock everywhere
 
-    "wifi_enabled": True,         # Settings > Wi-Fi/Bluetooth
-    "bluetooth_enabled": False,
+    "wifi_enabled": True,          # unused since Wi-Fi is now controlled for
+    "bluetooth_enabled": False,    # real via ui/net_control -- kept only so an
+                                    # existing ~/.pios_settings.json still loads
 
     "pin_enabled": False,         # Settings > Security
     "pin_code": "",               # 4-digit PIN, stored in the clear locally
@@ -56,6 +57,8 @@ _defaults = {
     "wallpaper": "None",          # Settings > Wallpaper: "None" or a preset
                                    # gradient name, or "Custom Photo"
     "wallpaper_path": "",         # used when wallpaper == "Custom Photo"
+
+    "device_name": "PiOS Device",  # Settings > About > Rename This Device
 
     # touch calibration, written by the Calibrate Touch app. None = raw
     # driver coordinates are used as-is (the default/factory state).

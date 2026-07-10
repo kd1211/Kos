@@ -67,6 +67,13 @@ class EmulatorApp(App):
     name = "RetroArch"
     icon = "\U0001F579"
 
+    @property
+    def wants_animation(self):
+        # only keep the OS rendering every frame while a core is actually
+        # stepping -- sitting in the ROM picker is just as static as any
+        # other menu and shouldn't keep the display looping at full speed
+        return self.state in ("running", "quickmenu")
+
     def __init__(self, os_ref):
         super().__init__(os_ref)
         self.state = "picker"
