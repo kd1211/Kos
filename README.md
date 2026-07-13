@@ -69,6 +69,12 @@ sudo python3 main.py
 
 ## What's included
 
+- `companion/kos_chat_companion.py` — **runs on a regular computer, not
+  the Kos device.** A standalone Tkinter desktop client that speaks the
+  exact same UDP-broadcast protocol as the Messages app, so anyone on
+  the same Wi-Fi without a Kos device can still join the PictoChat-style
+  chat -- draw or type into the same four rooms, right from a laptop.
+  See `companion/README.md`.
 - `drivers/lcd_st7796.py` — SPI driver for the ST7796S panel (init sequence,
   RGB565 framebuffer push from a PIL image).
 - `drivers/touch_ft6336u.py` — I2C driver for the FT6336U touch controller.
@@ -191,6 +197,15 @@ sudo python3 main.py
     bookmarks as a tile grid instead of a plain list. Up to four
     independent tabs; bookmarks persist to `~/.kos_bookmarks.json`.
   - **System** — CPU temperature, uptime, storage, memory
+  - **Messages** — a PictoChat-style local chat: four broadcast rooms
+    (A/B/C/D, same naming as the DS/DSi original), no accounts, no
+    server, no 1:1 DMs -- everyone on the same Wi-Fi with a room open
+    sees the same feed. Compose by drawing on a small canvas, typing,
+    or both together in one message, exactly like the original let you
+    combine handwriting and a keyboard. Pure UDP broadcast, nothing
+    persisted -- close the app and history's gone, on purpose. See
+    `companion/` for a desktop client so people without a Kos device
+    can join in.
   - **Voice Recorder** — records via `arecord` (ALSA), playback through
     the same pygame mixer Music uses, so a saved `.wav` is just another
     audio file. Optional hardware, same pattern as Camera: no mic or no
@@ -206,9 +221,9 @@ sudo python3 main.py
     each page in memory after the first visit so flipping back and
     forth is instant. File Browser and Downloads both open `.pdf`
     files here automatically.
-  - **Downloads** — a dedicated view of `~/Downloads` (the same folder
-    Messages already saves incoming files into), so received files have
-    a home screen of their own instead of only being reachable by
+  - **Downloads** — a dedicated view of `~/Downloads`, so anything you
+    save there (browser downloads, files copied over some other way)
+    has a home screen of its own instead of only being reachable by
     browsing there in File Browser. Opens files the same way File
     Browser does.
 

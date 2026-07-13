@@ -11,7 +11,7 @@ public GitHub repo. That repo needs one file, `apps.json`, at its root:
   {
     "name": "Dice",
     "class_name": "DiceApp",
-    "icon": "\ud83c\udfb2",
+    "icon": "\\ud83c\\udfb2",
     "description": "Roll a virtual dice",
     "file": "dice_app.py"
   }
