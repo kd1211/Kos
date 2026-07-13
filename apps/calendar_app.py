@@ -5,7 +5,7 @@ import os
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT
 
-EVENTS_FILE = os.path.expanduser("~/.pios_calendar.json")
+EVENTS_FILE = os.path.expanduser("~/.kos_calendar.json")
 QUICK_EVENTS = ["Meeting", "Birthday", "Reminder", "Appointment"]
 
 GRID_TOP = STATUS_BAR_H + 96

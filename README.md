@@ -1,4 +1,4 @@
-# PiOS — a tiny touchscreen phone OS for the Raspberry Pi
+# Kos — a tiny touchscreen phone OS for the Raspberry Pi
 
 Built for two specific Waveshare boards:
 
@@ -32,22 +32,22 @@ Built for two specific Waveshare boards:
 ## Install
 
 ```bash
-cd pios                 # wherever you cloned/extracted it
+cd Kos                  # wherever you cloned/extracted it
 sudo ./install.sh
 ```
 
 This installs every dependency (preferring apt's prebuilt ARM packages
 over pip, since compiling pillow/numpy/pygame from source on a Pi Zero
 can take the better part of an hour), enables SPI and I2C, and sets
-PiOS up as a systemd service (`pios.service`) that starts on boot and
+Kos up as a systemd service (`kos.service`) that starts on boot and
 restarts itself if it ever crashes. It installs *in place* -- wherever
 you run it from is where it stays; nothing gets copied elsewhere. Safe
 to re-run any time, including after a System Updater update.
 
 ```bash
-sudo systemctl start pios      # start it right now
-sudo systemctl status pios     # check if it's running
-journalctl -u pios -f          # follow its logs live
+sudo systemctl start kos      # start it right now
+sudo systemctl status kos     # check if it's running
+journalctl -u kos -f          # follow its logs live
 ```
 
 <details>
@@ -99,6 +99,11 @@ sudo python3 main.py
   is single-threaded, so blocking it would freeze touch input too.
   Reports "not available" cleanly if those tools/adapters aren't
   present rather than raising into the UI.
+- `ui/notifications.py` — a small persisted notification queue any app
+  posts to (`post(title, body, source=...)`), read by the Quick
+  Settings panel and the status-bar badge. Thread-safe, so background
+  work (an incoming chat message, a Wi-Fi scan result) can post
+  directly without touching the render loop.
 - `assets/fonts/` — DejaVuSans.ttf (all normal text) and Symbola.ttf (a
   fallback covering the emoji/pictograph glyphs used as app icons --
   the palette, globe, folder, lock, wallpaper, wifi, etc. -- that DejaVu
@@ -184,8 +189,28 @@ sudo python3 main.py
     links (rendered in blue, underlined, resolved against the page's
     URL so relative links work), and a New Tab page showing your
     bookmarks as a tile grid instead of a plain list. Up to four
-    independent tabs; bookmarks persist to `~/.pios_bookmarks.json`.
+    independent tabs; bookmarks persist to `~/.kos_bookmarks.json`.
   - **System** — CPU temperature, uptime, storage, memory
+  - **Voice Recorder** — records via `arecord` (ALSA), playback through
+    the same pygame mixer Music uses, so a saved `.wav` is just another
+    audio file. Optional hardware, same pattern as Camera: no mic or no
+    `arecord` just means a clean "not available" screen.
+  - **Clipboard Manager** — a shared text-clipboard history
+    (`ui/clipboard.py`) that Notes and Text Editor's Copy/Paste buttons
+    write into, since the on-screen Keyboard has no text-selection
+    primitive to build a real system clipboard on top of. Tap an older
+    entry to bring it back to the top (ready for the next Paste), or
+    delete/clear individually.
+  - **PDF Viewer** — rasterizes pages on demand via `pdftoppm`/`pdfinfo`
+    (poppler-utils) rather than a heavy PDF-parsing library, caching
+    each page in memory after the first visit so flipping back and
+    forth is instant. File Browser and Downloads both open `.pdf`
+    files here automatically.
+  - **Downloads** — a dedicated view of `~/Downloads` (the same folder
+    Messages already saves incoming files into), so received files have
+    a home screen of their own instead of only being reachable by
+    browsing there in File Browser. Opens files the same way File
+    Browser does.
 
 ### App Store
 `apps/app_store_app.py` fetches an `apps.json` manifest from a GitHub repo
@@ -193,8 +218,11 @@ you control (`STORE_REPO_OWNER` / `STORE_REPO_NAME` / `STORE_REPO_BRANCH`
 at the top of that file) and lists the apps in it. Tapping **Install**
 downloads the app's `.py` file into `apps/installed/`, imports it, and
 registers it live so it shows up on Home right away. The install is
-remembered in `~/.pios_installed_apps.json` and re-registered automatically
+remembered in `~/.kos_installed_apps.json` and re-registered automatically
 on the next boot via `load_installed_apps()` in `main.py`.
+
+Currently configured against
+[kd1211/Kos-App-Store](https://github.com/kd1211/Kos-App-Store).
 
 To publish an app, push a single-file `App` subclass to your repo plus an
 `apps.json` at the repo root:
@@ -204,6 +232,14 @@ To publish an app, push a single-file `App` subclass to your repo plus an
     "description": "Roll a virtual dice", "file": "dice_app.py" }
 ]
 ```
+
+### System Updater
+`apps/system_updater_app.py` checks a `version.txt` at the root of a
+GitHub repo (`UPDATE_REPO_OWNER` / `UPDATE_REPO_NAME` / `UPDATE_REPO_BRANCH`
+at the top of that file) against the local `version.txt`, and if they
+differ, downloads that repo's zipball, backs up the current install to
+`~/.kos_backup`, and replaces everything in place. Currently configured
+against [kd1211/Kos](https://github.com/kd1211/Kos).
 
 ### On-screen keyboard
 `ui/framework.py`'s `Keyboard` widget is a compact QWERTY layout (with a
@@ -230,10 +266,34 @@ Folders work like they do on a phone, not like a fixed menu structure:
 
 Folders are one level deep by design (no folders-in-folders). The
 layout -- which app or folder is on which page, in what order, and
-what's in each folder -- persists to `~/.pios_home_layout.json`.
+what's in each folder -- persists to `~/.kos_home_layout.json`.
 "Games" and "Tools" are just the *default* starting arrangement, seeded
 the first time Home ever runs; after that it's entirely yours to
 rearrange.
+
+### Quick Settings & Notifications
+Swipe down from the status bar -- or just tap it -- from anywhere in
+the OS (not a Home-only feature) to open a combined shade:
+- **Quick toggles**: Wi-Fi, Bluetooth, Flashlight (opens the Flashlight
+  app directly, since this hardware has no separate LED to toggle
+  silently -- it's the screen-as-torch trick), Airplane Mode (Wi-Fi +
+  Bluetooth off together), Battery Saver (caps brightness to 40% and
+  shortens auto-sleep to 60s), and a Developer Mode shortcut.
+- **Brightness and volume sliders**, live -- drag either one and it
+  applies immediately, the same values Settings reads and writes.
+- **Notifications**: any app can call `ui.notifications.post(title,
+  body, source=...)` -- wired up today for incoming Messages, an
+  available System Updater update, and a one-shot low-battery warning
+  (15%, with hysteresis so it doesn't spam every 2 seconds). Tap a
+  notification to mark it read, tap the × to dismiss just that one, or
+  Clear All. An unread count badge shows on the status bar itself.
+
+This lives in `ui/framework.py` at the `PhoneOS` level (not as an app),
+the same way the PIN lock screen does, since it needs to be reachable
+no matter what app is currently open. Touches that start within the
+slim status-bar strip are intercepted before ever reaching whatever
+app is open -- apps never have interactive content up there anyway --
+so this doesn't change how any existing app behaves.
 
 ### Quality-of-life touches
 - **Sleep mode**: `Settings -> Sleep display` blanks the screen and cuts

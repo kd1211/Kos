@@ -4,7 +4,7 @@ import time
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, FONT_XL, CARD_COLOR, ACCENT
 
-CONFIG_FILE = os.path.expanduser("~/.pios_weather.json")
+CONFIG_FILE = os.path.expanduser("~/.kos_weather.json")
 
 CITIES = [
     ("New York", 40.71, -74.01),

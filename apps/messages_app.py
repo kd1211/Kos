@@ -1,11 +1,11 @@
 """
 Messages -- peer-to-peer chat + file transfer over the local Wi-Fi
-network. No server, no accounts: every PiOS device broadcasts its
-presence over UDP and any other PiOS device on the same LAN can see it
+network. No server, no accounts: every Kos device broadcasts its
+presence over UDP and any other Kos device on the same LAN can see it
 and start a text chat or send it a file directly over TCP.
 
 Protocol (deliberately tiny):
-  - UDP broadcast on ANNOUNCE_PORT, payload "PIOS_HELLO:<device name>",
+  - UDP broadcast on ANNOUNCE_PORT, payload "KOS_HELLO:<device name>",
     every ~3s. Anyone who hears one records/refreshes that peer.
   - TCP on CHAT_PORT, one connection per message. First line is either
         MSG <utf8 text>
@@ -20,6 +20,7 @@ import time
 
 from ui.framework import App, Button, Keyboard, SCREEN_W, SCREEN_H, \
     STATUS_BAR_H, FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT, FG_COLOR
+from ui import notifications
 
 ANNOUNCE_PORT = 50210
 CHAT_PORT = 50211
@@ -27,7 +28,7 @@ PEER_TIMEOUT = 12
 KEYBOARD_H = 188
 DOWNLOADS_DIR = os.path.expanduser("~/Downloads")
 
-_device_name = f"PiOS-{socket.gethostname()}"
+_device_name = f"Kos-{socket.gethostname()}"
 
 
 class _Networking:
@@ -52,7 +53,7 @@ class _Networking:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        payload = f"PIOS_HELLO:{_device_name}".encode()
+        payload = f"KOS_HELLO:{_device_name}".encode()
         while True:
             try:
                 sock.sendto(payload, ("255.255.255.255", ANNOUNCE_PORT))
@@ -71,7 +72,7 @@ class _Networking:
             try:
                 data, (ip, _) = sock.recvfrom(256)
                 text = data.decode(errors="ignore")
-                if text.startswith("PIOS_HELLO:"):
+                if text.startswith("KOS_HELLO:"):
                     name = text.split(":", 1)[1]
                     with self.lock:
                         self.peers[ip] = {"name": name, "last_seen": time.time()}
@@ -102,6 +103,8 @@ class _Networking:
                     text = header[4:]
                     with self.lock:
                         self.chats.setdefault(ip, []).append(("them", text))
+                    sender = self.peers.get(ip, {}).get("name", ip)
+                    notifications.post(f"Message from {sender}", text, source="Messages")
                 elif header.startswith("FILE "):
                     _, fname, size_s = (header.split(" ", 2) + ["", "0"])[:3]
                     size = int(size_s) if size_s.isdigit() else 0
@@ -117,6 +120,8 @@ class _Networking:
                     with self.lock:
                         self.chats.setdefault(ip, []).append(
                             ("them", f"[sent a file: {safe_name}]"))
+                    sender = self.peers.get(ip, {}).get("name", ip)
+                    notifications.post(f"File from {sender}", safe_name, source="Messages")
                 conn.close()
             except Exception:
                 time.sleep(0.2)
@@ -263,7 +268,7 @@ class MessagesApp(App):
                        font=FONT_LG, fill=(255, 255, 255), anchor="mm")
             if not self._peers_cache:
                 draw.text((SCREEN_W // 2, SCREEN_H // 2),
-                           "Looking for other PiOS\ndevices on this Wi-Fi...",
+                           "Looking for other Kos\ndevices on this Wi-Fi...",
                            font=FONT_SM, fill=(150, 150, 160), anchor="mm", align="center")
             for b in self.buttons:
                 b.draw(draw)

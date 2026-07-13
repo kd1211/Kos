@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PiOS - a tiny touchscreen phone OS for the Raspberry Pi, built for:
+Kos - a tiny touchscreen phone OS for the Raspberry Pi, built for:
   - Waveshare 3.5inch Capacitive Touch LCD (ST7796S + FT6336U, SPI/I2C)
   - Waveshare UPS HAT (C) (INA219 battery monitor, I2C)
 
@@ -36,6 +36,10 @@ from apps.music_app import MusicApp
 from apps.terminal_app import TerminalApp
 from apps.gallery_app import GalleryApp
 from apps.camera_app import CameraApp
+from apps.voice_recorder_app import VoiceRecorderApp
+from apps.clipboard_manager_app import ClipboardManagerApp
+from apps.pdf_viewer_app import PdfViewerApp
+from apps.downloads_app import DownloadsApp
 from apps.text_editor_app import TextEditorApp
 from apps.messages_app import MessagesApp
 from apps.system_updater_app import SystemUpdaterApp
@@ -80,6 +84,10 @@ def main():
     os_.register_app(TerminalApp)
     os_.register_app(GalleryApp)
     os_.register_app(CameraApp)
+    os_.register_app(VoiceRecorderApp)
+    os_.register_app(ClipboardManagerApp)
+    os_.register_app(PdfViewerApp)
+    os_.register_app(DownloadsApp)
     os_.register_app(TextEditorApp)
     os_.register_app(MessagesApp)
     os_.register_app(SystemUpdaterApp)

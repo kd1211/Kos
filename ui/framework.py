@@ -18,11 +18,14 @@ battery on the UPS HAT (C) -- tap anywhere to wake back up.
 
 import os
 import bisect
+import threading
 import time
 from PIL import Image, ImageDraw, ImageFont
 
 from ui import theme
 from ui import sound
+from ui import net_control
+from ui import notifications
 from ui._font_coverage import DEJAVU_RANGES
 
 SCREEN_W = 320
@@ -478,6 +481,16 @@ class PhoneOS:
         self._lock_error = None
         self._lock_keys = self._build_lock_keys()
 
+        # -- Quick Settings / Notifications panel, reachable by swiping
+        # down from (or tapping) the status bar from anywhere in the OS,
+        # the same way the lock screen is handled above rather than as
+        # a per-app feature --
+        self.panel_open = False
+        self._panel_press_start = None
+        self._panel_buttons = []
+        self._panel_radio_state = {"wifi": None, "bluetooth": None}
+        self._panel_slider_drag = None   # "brightness" | "volume" | None
+
         try:
             self.lcd.set_backlight(self._prev_brightness)
         except Exception:
@@ -584,6 +597,214 @@ class PhoneOS:
             draw.rounded_rectangle([kx, ky, kx + kw, ky + kh], radius=10, fill=theme.card_color())
             draw.text((kx + kw // 2, ky + kh // 2), lab, font=FONT_LG, fill=fg, anchor="mm")
 
+    # -- Quick Settings / Notifications panel -----------------------------
+    # A combined shade, swiped down (or tapped open) from the status bar,
+    # reachable from anywhere in the OS -- not locked to Home or any one
+    # app, the same way a phone's notification shade works.
+    PANEL_TOP = STATUS_BAR_H
+    PANEL_BOTTOM = 420
+    PANEL_TILE_Y = PANEL_TOP + 10
+    PANEL_TILE_H = 56
+    PANEL_SLIDER_Y0 = PANEL_TILE_Y + 2 * (PANEL_TILE_H + 8) + 8
+    PANEL_SLIDER_H = 30
+    PANEL_SLIDER_GAP = 40
+    PANEL_NOTIF_Y = PANEL_SLIDER_Y0 + 2 * PANEL_SLIDER_GAP + 14
+
+    _PANEL_TOGGLES = ["wifi", "bluetooth", "flashlight", "airplane", "battery_saver", "developer"]
+    _PANEL_TOGGLE_LABELS = {"wifi": "Wi-Fi", "bluetooth": "Bluetooth", "flashlight": "Flashlight",
+                             "airplane": "Airplane", "battery_saver": "Battery\nSaver",
+                             "developer": "Developer"}
+    _PANEL_TOGGLE_ICONS = {"wifi": "\U0001F4F6", "bluetooth": "\U0001F517",
+                            "flashlight": "\U0001F526", "airplane": "\u2708",
+                            "battery_saver": "\U0001F50B", "developer": "\U0001F6E0"}
+
+    def _panel_on_open(self):
+        self.panel_open = True
+        self._panel_radio_state = {"wifi": None, "bluetooth": None}
+        self._panel_build_tiles()
+
+        def query():
+            wifi_on = net_control.wifi.is_radio_on()
+            bt_on = net_control.bluetooth.is_powered_on()
+            self._panel_radio_state = {"wifi": wifi_on, "bluetooth": bt_on}
+        threading.Thread(target=query, daemon=True).start()
+
+    def _panel_close(self):
+        self.panel_open = False
+        self._panel_slider_drag = None
+
+    def _panel_build_tiles(self):
+        self._panel_buttons = []
+        cols, rows = 3, 2
+        margin = 8
+        tile_w = (SCREEN_W - margin * (cols + 1)) // cols
+        for i, key in enumerate(self._PANEL_TOGGLES):
+            r, c = divmod(i, cols)
+            x = margin + c * (tile_w + margin)
+            y = self.PANEL_TILE_Y + r * (self.PANEL_TILE_H + 8)
+            self._panel_buttons.append(
+                Button(x, y, tile_w, self.PANEL_TILE_H, "", (lambda k=key: self._panel_toggle(k))))
+
+    def _panel_toggle_state(self, key):
+        if key == "wifi":
+            return bool(self._panel_radio_state.get("wifi"))
+        if key == "bluetooth":
+            return bool(self._panel_radio_state.get("bluetooth"))
+        if key == "airplane":
+            return theme.get("airplane_mode")
+        if key == "battery_saver":
+            return theme.get("battery_saver")
+        if key == "developer":
+            return theme.get("developer_mode")
+        return False
+
+    def _panel_toggle(self, key):
+        if key == "flashlight":
+            self._panel_close()
+            self.open_app("Flashlight")
+            return
+        if key == "wifi":
+            new_state = not self._panel_toggle_state("wifi")
+            self._panel_radio_state["wifi"] = new_state
+            net_control.wifi.set_radio(new_state)
+        elif key == "bluetooth":
+            new_state = not self._panel_toggle_state("bluetooth")
+            self._panel_radio_state["bluetooth"] = new_state
+            net_control.bluetooth.set_power(new_state)
+        elif key == "airplane":
+            new_state = not theme.get("airplane_mode")
+            theme.set("airplane_mode", new_state)
+            self._panel_radio_state["wifi"] = not new_state
+            self._panel_radio_state["bluetooth"] = not new_state
+            net_control.wifi.set_radio(not new_state)
+            net_control.bluetooth.set_power(not new_state)
+        elif key == "battery_saver":
+            new_state = not theme.get("battery_saver")
+            theme.set("battery_saver", new_state)
+            if new_state:
+                b = min(theme.get("brightness"), 40)
+                theme.set("brightness", b)
+                try:
+                    self.lcd.set_backlight(b)
+                except Exception:
+                    pass
+                if not theme.get("sleep_timeout") or theme.get("sleep_timeout") > 60:
+                    theme.set("sleep_timeout", 60)
+        elif key == "developer":
+            theme.set("developer_mode", not theme.get("developer_mode"))
+
+    def _panel_slider_rect(self, which):
+        y = self.PANEL_SLIDER_Y0 if which == "brightness" else self.PANEL_SLIDER_Y0 + self.PANEL_SLIDER_GAP
+        return (20, y, SCREEN_W - 40, self.PANEL_SLIDER_H)
+
+    def _panel_hit_slider(self, x, y):
+        for which in ("brightness", "volume"):
+            sx, sy, sw, sh = self._panel_slider_rect(which)
+            if sx - 10 <= x <= sx + sw + 10 and sy - 10 <= y <= sy + sh + 10:
+                return which
+        return None
+
+    def _panel_set_slider(self, which, x):
+        sx, sy, sw, sh = self._panel_slider_rect(which)
+        frac = max(0.0, min(1.0, (x - sx) / sw))
+        val = int(frac * 100)
+        if which == "brightness":
+            theme.set("brightness", max(1, val))
+            try:
+                self.lcd.set_backlight(max(1, val))
+            except Exception:
+                pass
+        else:
+            theme.set("volume", val)
+            sound.refresh_volume()
+
+    def _panel_notif_rows(self):
+        return notifications.list_all()[:3]
+
+    def _panel_on_tap(self, x, y):
+        if y > self.PANEL_BOTTOM:
+            self._panel_close()
+            return
+        for b in self._panel_buttons:
+            if b.contains(x, y):
+                b.on_tap()
+                return
+        slider = self._panel_hit_slider(x, y)
+        if slider:
+            self._panel_slider_drag = slider
+            self._panel_set_slider(slider, x)
+            return
+        # "Clear All" sits just above the notification list
+        clear_y = self.PANEL_NOTIF_Y
+        if clear_y <= y <= clear_y + 24 and SCREEN_W - 90 <= x <= SCREEN_W - 20:
+            notifications.clear_all()
+            return
+        # dismiss ('x') on an individual notification row
+        row_h = 40
+        for i, n in enumerate(self._panel_notif_rows()):
+            ry = self.PANEL_NOTIF_Y + 30 + i * row_h
+            if ry <= y <= ry + row_h - 4 and SCREEN_W - 34 <= x <= SCREEN_W - 14:
+                notifications.dismiss(n["id"])
+                return
+            if ry <= y <= ry + row_h - 4:
+                notifications.mark_read(n["id"])
+                return
+
+    def _panel_on_touch_move(self, x, y):
+        if self._panel_slider_drag:
+            self._panel_set_slider(self._panel_slider_drag, x)
+
+    def _panel_on_touch_up(self):
+        self._panel_slider_drag = None
+
+    def _draw_panel(self, draw):
+        draw.rectangle([0, self.PANEL_TOP, SCREEN_W, self.PANEL_BOTTOM], fill=(22, 22, 28))
+
+        for key, b in zip(self._PANEL_TOGGLES, self._panel_buttons):
+            on = self._panel_toggle_state(key)
+            unknown = key in ("wifi", "bluetooth") and self._panel_radio_state.get(key) is None
+            bg = (90, 90, 100) if unknown else (theme.accent_color() if on else (46, 46, 54))
+            draw.rounded_rectangle([b.x, b.y, b.x + b.w, b.y + b.h], radius=10, fill=bg)
+            draw.text((b.x + b.w // 2, b.y + 18), self._PANEL_TOGGLE_ICONS[key], font=FONT_MD,
+                       fill=(255, 255, 255), anchor="mm")
+            draw.text((b.x + b.w // 2, b.y + b.h - 12), self._PANEL_TOGGLE_LABELS[key],
+                       font=FONT_SM, fill=(255, 255, 255), anchor="mm", align="center")
+
+        for which, label, val in (("brightness", "Brightness", theme.get("brightness")),
+                                   ("volume", "Volume", theme.get("volume"))):
+            sx, sy, sw, sh = self._panel_slider_rect(which)
+            draw.rounded_rectangle([sx, sy, sx + sw, sy + sh], radius=8, fill=(46, 46, 54))
+            fill_w = int(sw * val / 100)
+            draw.rounded_rectangle([sx, sy, sx + max(sh, fill_w), sy + sh], radius=8,
+                                    fill=theme.accent_color())
+            draw.text((sx + 10, sy + sh // 2), f"{label} {val}%", font=FONT_SM,
+                       fill=(255, 255, 255), anchor="lm")
+
+        unread = notifications.unread_count()
+        draw.text((20, self.PANEL_NOTIF_Y + 12), f"Notifications{f' ({unread} new)' if unread else ''}",
+                   font=FONT_SM, fill=theme.fg_color(), anchor="lm")
+        draw.text((SCREEN_W - 20, self.PANEL_NOTIF_Y + 12), "Clear All", font=FONT_SM,
+                   fill=(230, 90, 90), anchor="rm")
+
+        rows = self._panel_notif_rows()
+        row_h = 40
+        if not rows:
+            draw.text((SCREEN_W // 2, self.PANEL_NOTIF_Y + 50), "No notifications", font=FONT_SM,
+                       fill=(140, 140, 150), anchor="mm")
+        for i, n in enumerate(rows):
+            ry = self.PANEL_NOTIF_Y + 30 + i * row_h
+            bg = (38, 38, 46) if n["read"] else (50, 58, 72)
+            draw.rounded_rectangle([12, ry, SCREEN_W - 12, ry + row_h - 4], radius=8, fill=bg)
+            draw.text((22, ry + 8), n["title"], font=FONT_SM, fill=theme.fg_color(), anchor="lm")
+            if n["body"]:
+                body = n["body"] if len(n["body"]) <= 34 else n["body"][:33] + "\u2026"
+                draw.text((22, ry + 24), body, font=FONT_SM, fill=(160, 160, 170), anchor="lm")
+            draw.text((SCREEN_W - 24, ry + (row_h - 4) // 2), "\u2715", font=FONT_SM,
+                       fill=(150, 150, 160), anchor="mm")
+
+        draw.rounded_rectangle([SCREEN_W // 2 - 20, self.PANEL_BOTTOM - 10, SCREEN_W // 2 + 20,
+                                 self.PANEL_BOTTOM - 6], radius=2, fill=(90, 90, 100))
+
     # -- battery -------------------------------------------------------
     def _read_battery(self):
         now = time.time()
@@ -593,7 +814,20 @@ class PhoneOS:
             except Exception:
                 pass
             self._battery_last_read = now
+            self._check_low_battery(self._battery_cache)
         return self._battery_cache
+
+    def _check_low_battery(self, batt):
+        # a one-shot warning, not a repeat-every-2-seconds spam: only
+        # fires again after charging or climbing back above 25% resets it
+        pct = batt.get("percent", 100)
+        charging = batt.get("charging", False)
+        if charging or pct > 25:
+            self._low_battery_warned = False
+            return
+        if pct <= 15 and not getattr(self, "_low_battery_warned", False):
+            self._low_battery_warned = True
+            notifications.post("Low battery", f"{pct}% remaining - plug in soon", source="Battery")
 
     def _draw_status_bar(self, draw):
         fg = theme.fg_color()
@@ -615,6 +849,19 @@ class PhoneOS:
         if theme.get("developer_mode"):
             draw.text((SCREEN_W // 2 + 24, STATUS_BAR_H // 2), "DEV",
                        font=FONT_SM, fill=(255, 180, 60), anchor="mm")
+
+        # a small bell + unread count, just left of the battery indicator,
+        # so there's an at-a-glance hint to swipe down even before you
+        # discover the gesture
+        unread = notifications.unread_count()
+        if unread:
+            bell_x = SCREEN_W - 96
+            draw.text((bell_x, STATUS_BAR_H // 2), "\U0001F514", font=FONT_SM,
+                       fill=fg, anchor="mm")
+            badge_x = bell_x + 10
+            draw.ellipse([badge_x, 3, badge_x + 14, 17], fill=(230, 90, 90))
+            draw.text((badge_x + 7, 10), str(min(unread, 9)), font=FONT_SM,
+                       fill=(255, 255, 255), anchor="mm")
 
         batt = self._read_battery()
         pct = batt.get("percent", 100)
@@ -644,6 +891,8 @@ class PhoneOS:
             self._draw_lock_screen(draw)
         elif self.current_app:
             self.current_app.draw(draw, self._canvas)
+        if self.panel_open:
+            self._draw_panel(draw)
         self.lcd.display(self._canvas)
 
     def poll_touch_raw(self):
@@ -710,14 +959,36 @@ class PhoneOS:
                     sound.click()
                     if self.locked:
                         self._lock_on_tap(*raw)
+                    elif self.panel_open:
+                        self._panel_on_tap(*raw)
+                    elif raw[1] < STATUS_BAR_H:
+                        # a touch starting on the status bar either becomes
+                        # a swipe-down (below, on the move branch) or, if
+                        # released without much movement, a tap-to-open
+                        self._panel_press_start = raw
                     elif self.current_app:
                         self.current_app.on_tap(*raw)
                 elif now_down and was_down:
                     self._last_activity = time.time()
-                    if not self.locked and self.current_app:
+                    if self.locked:
+                        pass
+                    elif self.panel_open:
+                        self._panel_on_touch_move(*raw)
+                    elif self._panel_press_start is not None:
+                        if raw[1] - self._panel_press_start[1] > 28:
+                            self._panel_on_open()
+                            self._panel_press_start = None
+                    elif self.current_app:
                         self.current_app.on_touch_move(*raw)
                 elif was_down and not now_down:
-                    if not self.locked and self.current_app:
+                    if self.locked:
+                        pass
+                    elif self.panel_open:
+                        self._panel_on_touch_up()
+                    elif self._panel_press_start is not None:
+                        self._panel_on_open()  # released without dragging = tap-to-open
+                        self._panel_press_start = None
+                    elif self.current_app:
                         self.current_app.on_touch_up()
 
                 self._last_touch_state = now_down

@@ -27,7 +27,7 @@ DEFAULT_BOOKMARKS = [
     {"title": "Hacker News", "url": "https://news.ycombinator.com"},
 ]
 
-BOOKMARKS_PATH = os.path.expanduser("~/.pios_bookmarks.json")
+BOOKMARKS_PATH = os.path.expanduser("~/.kos_bookmarks.json")
 
 LINES_PER_PAGE = 13
 CHARS_PER_LINE = 38
@@ -435,7 +435,7 @@ class BrowserApp(App):
     # -- fetching + navigating -------------------------------------------------
     def _fetch_and_wrap(self, url):
         import requests
-        resp = requests.get(url, timeout=8, headers={"User-Agent": "PiOS/1.0"})
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "Kos/1.0"})
         resp.raise_for_status()
         extractor = _TextExtractor()
         extractor.feed(resp.text)

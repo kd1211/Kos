@@ -31,7 +31,7 @@ from ui.framework import App, Button, Keyboard, SCREEN_W, SCREEN_H, STATUS_BAR_H
     FONT_LG, FONT_SM, FONT_MD
 from apps.app_store_app import _load_registry, _save_registry, INSTALL_DIR
 
-LAYOUT_PATH = os.path.expanduser("~/.pios_home_layout.json")
+LAYOUT_PATH = os.path.expanduser("~/.kos_home_layout.json")
 ICONS_PER_PAGE = 9      # only used to size the *initial* auto layout
 COLS = 3
 CONTENT_TOP = STATUS_BAR_H + 46
@@ -54,6 +54,7 @@ DEFAULT_FOLDERS = [
     {"type": "folder", "name": "Tools", "icon": "\U0001F4C1",
      "members": ["Calculator", "Notes", "TextEditor", "FileBrowser", "Calendar",
                  "Weather", "Browser", "System", "Terminal", "Gallery", "Camera", "Messages",
+                 "Voice Recorder", "Clipboard Manager", "PDF Viewer", "Downloads",
                  "System Updater", "Calibrate Touch"]},
 ]
 
@@ -578,7 +579,7 @@ class Home(App):
         else:
             draw.rectangle([0, STATUS_BAR_H, SCREEN_W, SCREEN_H], fill=theme.bg_color())
 
-        draw.text((SCREEN_W // 2, STATUS_BAR_H + 20), "PiOS", font=FONT_LG,
+        draw.text((SCREEN_W // 2, STATUS_BAR_H + 20), "Kos", font=FONT_LG,
                    fill=theme.fg_color(), anchor="mm")
 
         for (rx, ry, rw, rh, item) in self._icon_rects:

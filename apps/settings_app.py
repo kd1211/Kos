@@ -12,7 +12,7 @@ Settings -- sections:
   About          - version info + reset everything to defaults
 
 Every control here writes straight through ui.theme (persisted to
-~/.pios_settings.json), so other apps/screens read the same live values
+~/.kos_settings.json), so other apps/screens read the same live values
 immediately -- no reboot needed to see a new theme, wallpaper, or volume.
 The PIN itself is enforced by the OS lock screen in ui/framework.py.
 
@@ -711,7 +711,7 @@ class SettingsApp(App):
     def _build_power(self):
         self.buttons = [
             Button(SCREEN_W // 2 - 100, TOP + 60, 200, 46,
-                   "Restart PiOS", self._confirm_restart, font=FONT_SM),
+                   "Restart Kos", self._confirm_restart, font=FONT_SM),
             Button(SCREEN_W // 2 - 100, TOP + 116, 200, 46,
                    "Shut Down", self._confirm_shutdown, font=FONT_SM, bg=(150, 60, 60)),
             self._back_button(),
@@ -773,7 +773,7 @@ class SettingsApp(App):
 
     def _start_device_rename(self):
         self.section = "device_rename"
-        self._device_name_draft = theme.get("device_name") or "PiOS Device"
+        self._device_name_draft = theme.get("device_name") or "Kos Device"
         self._rename_keyboard = Keyboard(4, SCREEN_H - KEYBOARD_H, SCREEN_W - 8, KEYBOARD_H - 4)
         self.buttons = [
             Button(16, SCREEN_H - KEYBOARD_H - 44, 90, 36, "Cancel", self._cancel_device_rename, font=FONT_SM),
@@ -793,7 +793,7 @@ class SettingsApp(App):
         self._build_about()
 
     def _save_device_rename(self):
-        theme.set("device_name", self._device_name_draft.strip() or "PiOS Device")
+        theme.set("device_name", self._device_name_draft.strip() or "Kos Device")
         self.section = "about"
         self._build_about()
 
@@ -990,10 +990,10 @@ class SettingsApp(App):
 
     def _draw_power_confirm(self, draw):
         if self._power_action == "shutdown":
-            text = "Shut down PiOS?\nMake sure you're ready to\nunplug or press the power button."
+            text = "Shut down Kos?\nMake sure you're ready to\nunplug or press the power button."
             color = (230, 90, 90)
         else:
-            text = "Restart PiOS?"
+            text = "Restart Kos?"
             color = (230, 170, 60)
         draw.text((SCREEN_W // 2, SCREEN_H // 2 - 50), text, font=FONT_MD,
                    fill=color, anchor="mm", align="center")
@@ -1013,7 +1013,7 @@ class SettingsApp(App):
             storage_line = "Storage: unavailable"
 
         lines = [
-            theme.get("device_name") or "PiOS Device", "",
+            theme.get("device_name") or "Kos Device", "",
             "A tiny touchscreen OS for the",
             "Raspberry Pi + Waveshare 3.5\"",
             "LCD and UPS HAT (C).", "",

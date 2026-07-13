@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# install.sh -- installs PiOS's dependencies and sets it up as a systemd
+# install.sh -- installs Kos's dependencies and sets it up as a systemd
 # service that starts on boot and restarts if it ever crashes.
 #
 # Usage:
-#   cd pios          # wherever you cloned/extracted it -- it installs
+#   cd Kos           # wherever you cloned/extracted it -- it installs
 #                     # IN PLACE, right here, not copied anywhere else
 #   sudo ./install.sh
 #
@@ -25,13 +25,13 @@ fi
 # the directory this script itself lives in becomes the permanent install
 # location -- main.py and every app already resolve their own paths
 # relative to themselves (see apps/system_updater_app.py's PROJECT_ROOT),
-# so PiOS runs fine from wherever you put it; nothing gets copied around
+# so Kos runs fine from wherever you put it; nothing gets copied around
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 if [ ! -f "$SCRIPT_DIR/main.py" ]; then
     echo "Error: main.py not found in $SCRIPT_DIR"
-    echo "Run this script from inside the pios project folder."
+    echo "Run this script from inside the Kos project folder."
     exit 1
 fi
 
@@ -43,7 +43,7 @@ if ! id "$RUN_USER" &>/dev/null; then
     RUN_USER="root"
 fi
 
-echo "==> Installing PiOS from: $SCRIPT_DIR"
+echo "==> Installing Kos from: $SCRIPT_DIR"
 echo "==> Service will run as user: $RUN_USER"
 echo
 
@@ -67,7 +67,9 @@ apt-get install -y --no-install-recommends \
     i2c-tools \
     fonts-dejavu-core \
     network-manager \
-    bluez
+    bluez \
+    poppler-utils \
+    alsa-utils
 
 # smbus2 specifically (the project imports `smbus2`, not the older
 # `smbus` apt already installed above) -- try apt first, pip as a
@@ -107,11 +109,11 @@ fi
 echo
 
 # -- systemd service ----------------------------------------------------------
-SERVICE_PATH="/etc/systemd/system/pios.service"
+SERVICE_PATH="/etc/systemd/system/kos.service"
 echo "==> Writing $SERVICE_PATH ..."
 cat > "$SERVICE_PATH" <<EOF
 [Unit]
-Description=PiOS - touchscreen launcher
+Description=Kos - touchscreen launcher
 After=multi-user.target
 
 [Service]
@@ -129,23 +131,23 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable pios.service
+systemctl enable kos.service
 
 echo
 echo "==> Done."
 echo
-echo "PiOS is installed as a systemd service (pios.service), running as '$RUN_USER',"
+echo "Kos is installed as a systemd service (kos.service), running as '$RUN_USER',"
 echo "and will start automatically on every boot."
 echo
 echo "Useful commands:"
-echo "  sudo systemctl start pios      # start it right now"
-echo "  sudo systemctl stop pios       # stop it"
-echo "  sudo systemctl restart pios    # restart (e.g. after an update)"
-echo "  sudo systemctl status pios     # check if it's running"
-echo "  journalctl -u pios -f          # follow its logs live"
+echo "  sudo systemctl start kos      # start it right now"
+echo "  sudo systemctl stop kos       # stop it"
+echo "  sudo systemctl restart kos    # restart (e.g. after an update)"
+echo "  sudo systemctl status kos     # check if it's running"
+echo "  journalctl -u kos -f          # follow its logs live"
 echo
-read -r -p "Start PiOS now? [Y/n] " REPLY
+read -r -p "Start Kos now? [Y/n] " REPLY
 if [[ ! "$REPLY" =~ ^[Nn]$ ]]; then
-    systemctl start pios.service
-    echo "Started. Check 'sudo systemctl status pios' or 'journalctl -u pios -f' if the screen stays blank."
+    systemctl start kos.service
+    echo "Started. Check 'sudo systemctl status kos' or 'journalctl -u kos -f' if the screen stays blank."
 fi

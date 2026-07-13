@@ -1,5 +1,5 @@
 """
-App Store -- browses and installs single-file PiOS apps from a GitHub repo.
+App Store -- browses and installs single-file Kos apps from a GitHub repo.
 
 --------------------------------------------------------------------------
 SETTING UP YOUR OWN STORE REPO
@@ -11,7 +11,7 @@ public GitHub repo. That repo needs one file, `apps.json`, at its root:
   {
     "name": "Dice",
     "class_name": "DiceApp",
-    "icon": "\\ud83c\\udfb2",
+    "icon": "\ud83c\udfb2",
     "description": "Roll a virtual dice",
     "file": "dice_app.py"
   }
@@ -25,7 +25,7 @@ public GitHub repo. That repo needs one file, `apps.json`, at its root:
 
 Tapping "Install" downloads that file into apps/installed/, imports it,
 and registers it live so it shows up on the Home screen immediately. The
-choice is remembered in ~/.pios_installed_apps.json so it's restored
+choice is remembered in ~/.kos_installed_apps.json so it's restored
 automatically on the next boot (see load_installed_apps() below, which
 main.py calls at startup).
 --------------------------------------------------------------------------
@@ -45,7 +45,7 @@ STORE_MANIFEST_PATH = "apps.json"
 
 INSTALL_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "apps", "installed")
-REGISTRY_FILE = os.path.expanduser("~/.pios_installed_apps.json")
+REGISTRY_FILE = os.path.expanduser("~/.kos_installed_apps.json")
 
 ROW_H = 64
 
@@ -72,7 +72,7 @@ def _save_registry(entries):
 
 def _import_app_class(filepath, class_name=None):
     """Load a single-file app module from disk and return its App subclass."""
-    mod_name = "pios_installed_" + os.path.splitext(os.path.basename(filepath))[0]
+    mod_name = "kos_installed_" + os.path.splitext(os.path.basename(filepath))[0]
     spec = importlib.util.spec_from_file_location(mod_name, filepath)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -120,7 +120,7 @@ class AppStoreApp(App):
             return
         try:
             resp = requests.get(_raw_url(STORE_MANIFEST_PATH), timeout=8,
-                                 headers={"User-Agent": "PiOS/1.0"})
+                                 headers={"User-Agent": "Kos/1.0"})
             resp.raise_for_status()
             self.entries = resp.json()
             self.state = "list"
@@ -139,7 +139,7 @@ class AppStoreApp(App):
         try:
             file_rel = entry["file"]
             resp = requests.get(_raw_url(file_rel), timeout=10,
-                                 headers={"User-Agent": "PiOS/1.0"})
+                                 headers={"User-Agent": "Kos/1.0"})
             resp.raise_for_status()
 
             os.makedirs(INSTALL_DIR, exist_ok=True)

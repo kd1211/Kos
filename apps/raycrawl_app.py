@@ -5,7 +5,7 @@ early-90s FPS games): cast one ray per screen column with DDA, draw a
 shaded vertical wall strip sized by (fisheye-corrected) distance, then
 paint stationary enemy sprites on top using the per-column depth buffer
 for occlusion, sorted back-to-front. Everything here -- the map, the
-sprites, the sounds -- is original to PiOS.
+sprites, the sounds -- is original to Kos.
 
 Touchscreen controls (single-touch, so only one held at a time, like
 everything else on this device): a Forward/Back pad on the left, a
