@@ -12,7 +12,6 @@ class ReactionApp(App):
     icon = "\u26A1"
 
     def on_open(self):
-        self.wants_animation = True
         self.score = 0
         self.active_cell = None
         self.start_time = time.time()

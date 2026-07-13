@@ -1,9 +1,8 @@
 import os
 from ui.framework import App, Button, Keyboard, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_MD, FONT_SM, CARD_COLOR, ACCENT, FG_COLOR
-from ui import clipboard
 
-NOTES_FILE = os.path.expanduser("~/.kos_notes.txt")
+NOTES_FILE = os.path.expanduser("~/.pios_notes.txt")
 
 QUICK_PHRASES = ["Milk", "Call mom", "Water plants", "Pay bills",
                  "Meeting 3pm", "Backup files"]
@@ -21,7 +20,6 @@ class NotesApp(App):
         self.mode = "list"
         self.draft = ""
         self.keyboard = None
-        self.status = None
         self._build_list_buttons()
 
     # -- list mode ------------------------------------------------------
@@ -36,9 +34,6 @@ class NotesApp(App):
                 Button(x, y, (SCREEN_W - 48) // 2, 38, phrase,
                        self._add(phrase), font=FONT_SM))
         self.buttons.append(
-            Button(16, SCREEN_H - 154, SCREEN_W - 32, 38, "Copy Last Note",
-                   self._copy_last, font=FONT_SM))
-        self.buttons.append(
             Button(16, SCREEN_H - 108, (SCREEN_W - 48) // 2, 40,
                    "Type note...", self._start_typing, font=FONT_SM))
         self.buttons.append(
@@ -48,28 +43,15 @@ class NotesApp(App):
             Button(SCREEN_W // 2 - 60, SCREEN_H - 58, 120, 42,
                    "Home", self.os.go_home, font=FONT_SM))
 
-    def _copy_last(self):
-        if self.notes:
-            clipboard.copy(self.notes[-1], source="Notes")
-            self.status = "Copied"
-        else:
-            self.status = "Nothing to copy"
-
     # -- typing mode ------------------------------------------------------
     def _start_typing(self):
         self.mode = "type"
         self.draft = ""
         self.keyboard = Keyboard(4, SCREEN_H - KEYBOARD_H, SCREEN_W - 8, KEYBOARD_H - 4)
         self.buttons = [
-            Button(16, STATUS_BAR_H + 92, 70, 34, "Cancel", self._cancel_typing, font=FONT_SM),
-            Button(94, STATUS_BAR_H + 92, 70, 34, "Paste", self._paste, font=FONT_SM),
-            Button(SCREEN_W - 90, STATUS_BAR_H + 92, 74, 34, "Save", self._save_draft, font=FONT_SM),
+            Button(16, STATUS_BAR_H + 92, 90, 34, "Cancel", self._cancel_typing, font=FONT_SM),
+            Button(SCREEN_W - 106, STATUS_BAR_H + 92, 90, 34, "Save", self._save_draft, font=FONT_SM),
         ]
-
-    def _paste(self):
-        text = clipboard.latest()
-        if text:
-            self.draft = (self.draft + text)[:MAX_DRAFT_LEN]
 
     def _cancel_typing(self):
         self.mode = "list"
@@ -138,10 +120,6 @@ class NotesApp(App):
         draw.rectangle([16, top + 16, SCREEN_W - 16, top + 66], fill=CARD_COLOR)
         text = self.notes[-1] if self.notes else "No notes yet - tap a quick note"
         draw.text((24, top + 41), text, font=FONT_SM, fill=ACCENT, anchor="lm")
-
-        if self.status:
-            draw.text((SCREEN_W // 2, top + 78), self.status, font=FONT_SM,
-                       fill=(150, 220, 150), anchor="mm")
 
         for b in self.buttons:
             b.draw(draw)

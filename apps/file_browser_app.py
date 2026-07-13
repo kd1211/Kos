@@ -179,9 +179,6 @@ class FileBrowserApp(App):
         if ext in IMAGE_EXTS:
             self.os.launch_arg = path
             self.os.open_app("Gallery")
-        elif ext == ".pdf":
-            self.os.launch_arg = path
-            self.os.open_app("PDF Viewer")
         elif ext == ".phoneapp":
             self._install_phoneapp(path)
         else:

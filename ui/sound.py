@@ -1,9 +1,9 @@
 """
-Central sound manager for Kos: short UI feedback tones, alarm/timer
+Central sound manager for PiOS: short UI feedback tones, alarm/timer
 beeps, and background music playback for the Music app.
 
 Built on pygame's mixer only (no video/display init, so it stays light).
-`numpy` -- already a Kos dependency for the LCD framebuffer -- is reused
+`numpy` -- already a PiOS dependency for the LCD framebuffer -- is reused
 to synthesize tones on the fly, so no audio asset files are needed for
 clicks/beeps.
 

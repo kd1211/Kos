@@ -3,7 +3,7 @@ Music -- a minimal audio player.
 
 Plays anything pygame's mixer can decode (mp3/ogg/wav) from ~/Music
 (create the folder and drop files in). Uses ui/sound.py so it shares
-the same master volume as the rest of Kos -- turning volume down in
+the same master volume as the rest of PiOS -- turning volume down in
 Settings turns the music down too.
 """
 

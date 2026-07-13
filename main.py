@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kos - a tiny touchscreen phone OS for the Raspberry Pi, built for:
+PiOS - a tiny touchscreen phone OS for the Raspberry Pi, built for:
   - Waveshare 3.5inch Capacitive Touch LCD (ST7796S + FT6336U, SPI/I2C)
   - Waveshare UPS HAT (C) (INA219 battery monitor, I2C)
 
@@ -35,11 +35,6 @@ from apps.app_store_app import AppStoreApp, load_installed_apps
 from apps.music_app import MusicApp
 from apps.terminal_app import TerminalApp
 from apps.gallery_app import GalleryApp
-from apps.camera_app import CameraApp
-from apps.voice_recorder_app import VoiceRecorderApp
-from apps.clipboard_manager_app import ClipboardManagerApp
-from apps.pdf_viewer_app import PdfViewerApp
-from apps.downloads_app import DownloadsApp
 from apps.text_editor_app import TextEditorApp
 from apps.messages_app import MessagesApp
 from apps.system_updater_app import SystemUpdaterApp
@@ -47,7 +42,6 @@ from apps.calibrate_touch_app import CalibrateTouchApp
 from apps.snake_app import SnakeApp
 from apps.game2048_app import Game2048App
 from apps.breakout_app import BreakoutApp
-from apps.raycrawl_app import RaycrawlApp
 
 
 def main():
@@ -83,11 +77,6 @@ def main():
     os_.register_app(MusicApp)
     os_.register_app(TerminalApp)
     os_.register_app(GalleryApp)
-    os_.register_app(CameraApp)
-    os_.register_app(VoiceRecorderApp)
-    os_.register_app(ClipboardManagerApp)
-    os_.register_app(PdfViewerApp)
-    os_.register_app(DownloadsApp)
     os_.register_app(TextEditorApp)
     os_.register_app(MessagesApp)
     os_.register_app(SystemUpdaterApp)
@@ -95,7 +84,16 @@ def main():
     os_.register_app(SnakeApp)
     os_.register_app(Game2048App)
     os_.register_app(BreakoutApp)
-    os_.register_app(RaycrawlApp)
+
+    # Group related apps into folders on the Home screen
+    os_.register_folder("Games", ["TicTacToe", "Memory", "Reaction", "RetroArch",
+                                   "Snake", "2048", "Breakout"],
+                         icon="\U0001F3AE")
+    os_.register_folder("Tools", ["Calculator", "Notes", "TextEditor", "FileBrowser",
+                                   "Calendar", "Weather", "Browser", "System",
+                                   "Terminal", "Gallery", "Messages",
+                                   "System Updater", "Calibrate Touch"],
+                         icon="\U0001F4C1")
 
     # Re-register any apps previously installed from the App Store so they
     # persist across reboots. A bad/missing download won't stop boot.
