@@ -204,8 +204,6 @@ class ChatApp:
         self.tab_buttons = {}
         for r in ROOMS:
             b = tk.Button(tabs, text=f"Room {r}", relief="flat",
-                           bg="#2a2a32", fg="#ccc",
-                           activebackground="#3a6fd8", activeforeground="white",
                            command=lambda r=r: self._switch_room(r))
             b.pack(side="left", expand=True, fill="x", padx=2)
             self.tab_buttons[r] = b
@@ -221,8 +219,7 @@ class ChatApp:
         self.feed_inner = tk.Frame(self.feed_canvas, bg="#0c0c10")
         self.feed_inner.bind("<Configure>",
                               lambda e: self.feed_canvas.configure(scrollregion=self.feed_canvas.bbox("all")))
-        self._feed_window = self.feed_canvas.create_window((0, 0), window=self.feed_inner, anchor="nw")
-        self.feed_canvas.bind("<Configure>", self._on_feed_canvas_configure)
+        self.feed_canvas.create_window((0, 0), window=self.feed_inner, anchor="nw")
         self.feed_canvas.configure(yscrollcommand=scrollbar.set)
         self.feed_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -245,10 +242,7 @@ class ChatApp:
 
         row = tk.Frame(compose, bg="#1a1a20")
         row.pack(fill="x", pady=(0, 4))
-        self.text_entry = tk.Entry(row, bg="#2a2a32", fg="#eee",
-                                    insertbackground="#eee",
-                                    relief="flat", highlightthickness=1,
-                                    highlightbackground="#444")
+        self.text_entry = tk.Entry(row)
         self.text_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         self.text_entry.bind("<Return>", lambda e: self._send())
         tk.Button(row, text="Clear", command=self._clear_compose).pack(side="left", padx=2)
@@ -258,10 +252,6 @@ class ChatApp:
         self.status_label.pack(pady=(0, 4))
 
         self._switch_room("A")
-        self.root.update_idletasks()
-
-    def _on_feed_canvas_configure(self, event):
-        self.feed_canvas.itemconfigure(self._feed_window, width=event.width)
 
     # -- drawing ------------------------------------------------------------
     def _on_canvas_press(self, event):
@@ -353,15 +343,9 @@ def main():
     name = simpledialog.askstring("Kos Chat Companion", "Your name:",
                                     initialvalue=f"Guest-{secrets.token_hex(2)}", parent=root)
     if not name:
-        root.destroy()
         return
     root.deiconify()
-    root.lift()
-    root.attributes("-topmost", True)
-    root.after_idle(root.attributes, "-topmost", False)
-    root.update_idletasks()
     ChatApp(root, name.strip()[:24])
-    root.update()
     root.mainloop()
 
 

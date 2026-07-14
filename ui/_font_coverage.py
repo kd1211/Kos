@@ -6,7 +6,7 @@ Symbola.ttf (which covers the emoji/pictograph icons this OS uses that
 DejaVu doesn't). Generated once offline with fontTools so the Pi itself
 never needs fontTools installed at runtime -- regenerate by running:
     python3 -c "from fontTools.ttLib import TTFont; ..."
-(see git history / the PiOS build notes) if DejaVuSans.ttf is ever
+(see git history / the Kos build notes) if DejaVuSans.ttf is ever
 swapped for a different build.
 """
 

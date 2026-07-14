@@ -3,7 +3,7 @@ A tiny libretro-inspired "core" interface.
 
 Real RetroArch is a native frontend that loads compiled libretro cores
 (.so/.dll files) written in C/C++ -- that binary plugin model doesn't
-exist in a pure-Python, PIL-rendered phone OS. What PiOS borrows from
+exist in a pure-Python, PIL-rendered phone OS. What Kos borrows from
 RetroArch instead is the *architecture and feature set*: a frontend
 (apps/emulator_app.py) that's completely decoupled from any one system,
 a ROM browser that groups games by core, save states, rewind, and a

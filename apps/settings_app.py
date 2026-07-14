@@ -12,7 +12,7 @@ Settings -- sections:
   About          - version info + reset everything to defaults
 
 Every control here writes straight through ui.theme (persisted to
-~/.pios_settings.json), so other apps/screens read the same live values
+~/.kos_settings.json), so other apps/screens read the same live values
 immediately -- no reboot needed to see a new theme, wallpaper, or volume.
 The PIN itself is enforced by the OS lock screen in ui/framework.py.
 
@@ -23,10 +23,13 @@ drag scrolls instead of firing whatever row it started on.
 """
 
 import os
+import shutil
+import time
 from ui import theme, sound
 from ui.wallpaper import WALLPAPER_CHOICES, GRADIENTS
-from ui.framework import App, Button, ScrollArea, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
+from ui.framework import App, Button, Keyboard, ScrollArea, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_MD, FONT_SM, FONT_LG, ACCENT
+from ui import net_control
 from apps.app_store_app import _load_registry, _save_registry, INSTALL_DIR
 
 TOP = STATUS_BAR_H + 20
@@ -37,18 +40,21 @@ MENU_ITEMS = [
     ("sound", "\U0001F50A", "Sound"),
     ("theme", "\U0001F3A8", "Theme"),
     ("wallpaper", "\U0001F5BC", "Wallpaper"),
-    ("network", "\U0001F4F6", "Wi-Fi & Bluetooth"),
+    ("wifi", "\U0001F4F6", "Wi-Fi"),
+    ("bluetooth", "\U0001F517", "Bluetooth"),
     ("security", "\U0001F512", "Security"),
     ("datetime", "\U0001F550", "Date & Time"),
     ("apps", "\U0001F4E6", "Installed Apps"),
     ("developer", "\U0001F6E0", "Developer"),
+    ("power", "\u23FB", "Power"),
     ("about", "\u2139", "About"),
 ]
 
 SLEEP_CHOICES = [(0, "Off"), (30, "30s"), (60, "1m"), (120, "2m"), (300, "5m")]
 NUMPAD_LABELS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "\u232B"]
+KEYBOARD_H = 188
 
-SCROLL_SECTIONS = {"menu", "apps", "wallpaper", "wallpaper_photos"}
+SCROLL_SECTIONS = {"menu", "apps", "wallpaper", "wallpaper_photos", "wifi", "bluetooth"}
 SCROLL_Y0 = TOP + 20
 SCROLL_Y1 = SCREEN_H - 58
 
@@ -56,6 +62,18 @@ SCROLL_Y1 = SCREEN_H - 58
 class SettingsApp(App):
     name = "Settings"
     icon = "\u2699"
+
+    @property
+    def wants_animation(self):
+        # keep polling/redrawing while a scan or connect/pair is actually
+        # in flight, so status updates from the background thread in
+        # ui/net_control show up without needing a touch -- everywhere
+        # else in Settings is static and doesn't need this
+        if self.section in ("wifi", "bluetooth"):
+            snap = net_control.wifi.snapshot() if self.section == "wifi" \
+                else net_control.bluetooth.snapshot()
+            return snap["scanning"] or snap["busy"]
+        return False
 
     def on_open(self):
         self.section = "menu"
@@ -68,6 +86,17 @@ class SettingsApp(App):
         self._pending_uninstall = None
         self.scroll = ScrollArea(0, SCROLL_Y0, SCREEN_W, SCROLL_Y1 - SCROLL_Y0)
         self._scroll_rows = []
+
+        self._wifi_target = None       # network dict awaiting password/action
+        self._wifi_password = ""
+        self._wifi_keyboard = None
+        self._bt_target = None         # device dict awaiting an action
+        self._power_action = None
+        self.status_flash = None
+        self._renaming_device = False
+        self._device_name_draft = ""
+        self._rename_keyboard = None
+
         self._build_menu()
 
     # -- navigation -----------------------------------------------------
@@ -80,11 +109,13 @@ class SettingsApp(App):
                 "sound": self._build_sound,
                 "theme": self._build_theme,
                 "wallpaper": self._build_wallpaper,
-                "network": self._build_network,
+                "wifi": self._build_wifi,
+                "bluetooth": self._build_bluetooth,
                 "security": self._build_security,
                 "datetime": self._build_datetime,
                 "apps": self._build_apps,
                 "developer": self._build_developer,
+                "power": self._build_power,
                 "about": self._build_about,
             }[section]()
         return handler
@@ -95,8 +126,8 @@ class SettingsApp(App):
     def _home_button(self, x):
         return Button(x, SCREEN_H - 60, 90, 42, "Home", self.os.go_home, font=FONT_SM)
 
-    # -- scroll dispatch (menu / apps / wallpaper / wallpaper_photos) --------
-    def on_tap(self, x, y):
+    # -- scroll dispatch (menu / apps / wallpaper / wallpaper_photos / wifi / bluetooth) --
+    def _scroll_on_tap(self, x, y):
         if self.section not in SCROLL_SECTIONS:
             return super().on_tap(x, y)
 
@@ -110,7 +141,8 @@ class SettingsApp(App):
         if self.scroll.contains(x, y):
             self.scroll.begin_drag(y)
             content_y = (y - self.scroll.y) + self.scroll.offset
-            for (label, handler, ry, rh) in self._scroll_rows:
+            for row in self._scroll_rows:
+                label, handler, ry, rh = row[0], row[1], row[2], row[3]
                 if ry <= content_y <= ry + rh and 20 <= x <= SCREEN_W - 20:
                     self._press_row = handler
                     break
@@ -130,19 +162,29 @@ class SettingsApp(App):
         self._press_row = None
         self._press_start = None
 
-    def _set_scroll_rows(self, rows):
-        """rows: list of (label, handler). Lays them out in content space."""
+    def _set_scroll_rows(self, rows, top=None):
+        """rows: list of (label, handler) or (label, handler, meta) tuples.
+        meta is an optional dict a section-specific draw method can use
+        for extra per-row decoration (signal bars, connected badges).
+        `top` lets a section reserve header space (e.g. a radio toggle)
+        above the scrollable list instead of using the shared default."""
         self._scroll_rows = []
         y = 0
         row_h = 48
-        for label, handler in rows:
-            self._scroll_rows.append((label, handler, y, row_h - 8))
+        for row in rows:
+            if len(row) == 3:
+                label, handler, meta = row
+            else:
+                label, handler = row
+                meta = None
+            self._scroll_rows.append((label, handler, y, row_h - 8, meta))
             y += row_h
-        self.scroll = ScrollArea(0, SCROLL_Y0, SCREEN_W, SCROLL_Y1 - SCROLL_Y0)
+        y0 = SCROLL_Y0 if top is None else top
+        self.scroll = ScrollArea(0, y0, SCREEN_W, SCREEN_H - 58 - y0)
         self.scroll.set_content_height(y)
 
     def _draw_scroll_rows(self, draw, extra_draw=None):
-        for i, (label, handler, ry, rh) in enumerate(self._scroll_rows):
+        for i, (label, handler, ry, rh, meta) in enumerate(self._scroll_rows):
             sy = self.scroll.y + (ry - self.scroll.offset)
             if sy + rh < self.scroll.y or sy > self.scroll.y + self.scroll.h:
                 continue
@@ -151,7 +193,7 @@ class SettingsApp(App):
             draw.text((34, sy + rh // 2), label, font=FONT_SM,
                        fill=theme.fg_color(), anchor="lm")
             if extra_draw:
-                extra_draw(draw, i, sy, rh)
+                extra_draw(draw, i, sy, rh, meta)
         self.scroll.draw_scrollbar(draw, theme.accent_color())
 
     # -- menu -------------------------------------------------------------
@@ -295,30 +337,210 @@ class SettingsApp(App):
             self._build_wallpaper()
         return handler
 
-    # -- Wi-Fi & Bluetooth --------------------------------------------------
-    def _build_network(self):
+    # -- Wi-Fi ----------------------------------------------------------------
+    def _build_wifi(self):
+        self.section = "wifi"
+        net_control.wifi.scan_async()
+        self._refresh_wifi_rows()
         self.buttons = [
-            Button(SCREEN_W // 2 - 140, TOP + 90, 280, 50,
-                   self._wifi_label(), self._toggle_wifi, font=FONT_MD),
-            Button(SCREEN_W // 2 - 140, TOP + 150, 280, 50,
-                   self._bt_label(), self._toggle_bt, font=FONT_MD),
-            self._back_button(),
-            self._home_button(SCREEN_W - 106),
+            Button(16, TOP + 20, SCREEN_W - 32 - 74, 40, self._wifi_toggle_label(),
+                   self._toggle_wifi_radio, font=FONT_SM),
+            Button(SCREEN_W - 90, TOP + 20, 74, 40, "Scan", self._start_wifi_scan, font=FONT_SM),
+            self._back_button(), self._home_button(SCREEN_W - 106),
         ]
 
-    def _wifi_label(self):
-        return f"Wi-Fi: {'On' if theme.get('wifi_enabled') else 'Off'}"
+    def _wifi_toggle_label(self):
+        on = net_control.wifi.is_radio_on()
+        if on is None:
+            return "Wi-Fi: (unavailable)"
+        return f"Wi-Fi: {'On' if on else 'Off'}  \u2013  tap to {'disable' if on else 'enable'}"
 
-    def _bt_label(self):
-        return f"Bluetooth: {'On' if theme.get('bluetooth_enabled') else 'Off'}"
+    def _toggle_wifi_radio(self):
+        on = net_control.wifi.is_radio_on()
+        net_control.wifi.set_radio(not on)
+        self.buttons[0].label = self._wifi_toggle_label()
 
-    def _toggle_wifi(self):
-        theme.set("wifi_enabled", not theme.get("wifi_enabled"))
-        self._build_network()
+    def _refresh_wifi_rows(self):
+        snap = net_control.wifi.snapshot()
+        rows = []
+        for n in snap["networks"]:
+            label = n["ssid"]
+            if n["connected"]:
+                label += "  (connected)"
+            rows.append((label, self._wifi_row_tap(n), n))
+        if snap["scanning"]:
+            rows.append(("Scanning\u2026", lambda: None, None))
+        elif not rows:
+            msg = snap["status"] or "No networks found - tap Scan to try again"
+            rows.append((msg, self._start_wifi_scan, None))
+        self._set_scroll_rows(rows, top=TOP + 72)
 
-    def _toggle_bt(self):
-        theme.set("bluetooth_enabled", not theme.get("bluetooth_enabled"))
-        self._build_network()
+    def _start_wifi_scan(self):
+        net_control.wifi.scan_async()
+        self._refresh_wifi_rows()
+
+    def _wifi_row_tap(self, network):
+        def handler():
+            if network["connected"]:
+                self._wifi_target = network
+                self._build_wifi_actions()
+            elif network["secure"]:
+                self._wifi_target = network
+                self._wifi_password = ""
+                self._wifi_keyboard = Keyboard(4, SCREEN_H - KEYBOARD_H, SCREEN_W - 8, KEYBOARD_H - 4)
+                self.section = "wifi_password"
+                self._build_wifi_password_buttons()
+            else:
+                net_control.wifi.connect_async(network["ssid"])
+                self._refresh_wifi_rows()
+        return handler
+
+    def _build_wifi_password_buttons(self):
+        y0 = TOP + 8
+        self.buttons = [
+            Button(16, y0 + 100, 90, 34, "Cancel", self._cancel_wifi_password, font=FONT_SM),
+            Button(SCREEN_W - 106, y0 + 100, 90, 34, "Connect", self._submit_wifi_password, font=FONT_SM),
+        ]
+
+    def _wifi_password_key(self, val):
+        if val == "BACKSPACE":
+            self._wifi_password = self._wifi_password[:-1]
+        elif val == "ENTER":
+            self._submit_wifi_password()
+        elif len(self._wifi_password) < 63:
+            self._wifi_password += val
+
+    def _cancel_wifi_password(self):
+        self._wifi_target = None
+        self.section = "wifi"
+        self._build_wifi()
+
+    def _submit_wifi_password(self):
+        net_control.wifi.connect_async(self._wifi_target["ssid"], self._wifi_password)
+        self._wifi_target = None
+        self.section = "wifi"
+        self._build_wifi()
+
+    def _build_wifi_actions(self):
+        self.section = "wifi_actions"
+        ssid = self._wifi_target["ssid"]
+        y = SCREEN_H // 2 - 60
+        self.buttons = [
+            Button(SCREEN_W // 2 - 110, y, 220, 44, "Disconnect",
+                   self._wifi_disconnect_target, font=FONT_MD),
+            Button(SCREEN_W // 2 - 110, y + 54, 220, 44, "Forget This Network",
+                   self._wifi_forget_target, font=FONT_MD, bg=(150, 60, 60)),
+            Button(SCREEN_W // 2 - 110, y + 108, 220, 40, "Cancel",
+                   self._cancel_wifi_action, font=FONT_SM),
+        ]
+        self._wifi_actions_ssid = ssid
+
+    def _wifi_disconnect_target(self):
+        net_control.wifi.disconnect_async(self._wifi_target["ssid"])
+        self._cancel_wifi_action()
+
+    def _wifi_forget_target(self):
+        net_control.wifi.forget_async(self._wifi_target["ssid"])
+        self._cancel_wifi_action()
+
+    def _cancel_wifi_action(self):
+        self._wifi_target = None
+        self.section = "wifi"
+        self._build_wifi()
+
+    # -- Bluetooth --------------------------------------------------------------
+    def _build_bluetooth(self):
+        self.section = "bluetooth"
+        net_control.bluetooth.scan_async()
+        self._refresh_bt_rows()
+        self.buttons = [
+            Button(16, TOP + 20, SCREEN_W - 32 - 74, 40, self._bt_toggle_label(),
+                   self._toggle_bt_power, font=FONT_SM),
+            Button(SCREEN_W - 90, TOP + 20, 74, 40, "Scan", self._start_bt_scan, font=FONT_SM),
+            self._back_button(), self._home_button(SCREEN_W - 106),
+        ]
+
+    def _bt_toggle_label(self):
+        on = net_control.bluetooth.is_powered_on()
+        if on is None:
+            return "Bluetooth: (unavailable)"
+        return f"Bluetooth: {'On' if on else 'Off'}  \u2013  tap to {'disable' if on else 'enable'}"
+
+    def _toggle_bt_power(self):
+        on = net_control.bluetooth.is_powered_on()
+        net_control.bluetooth.set_power(not on)
+        self.buttons[0].label = self._bt_toggle_label()
+
+    def _refresh_bt_rows(self):
+        snap = net_control.bluetooth.snapshot()
+        rows = []
+        for d in snap["devices"]:
+            label = d["name"]
+            if d.get("connected"):
+                label += "  (connected)"
+            elif d.get("paired"):
+                label += "  (paired)"
+            rows.append((label, self._bt_row_tap(d), d))
+        if snap["scanning"]:
+            rows.append(("Scanning\u2026", lambda: None, None))
+        elif not rows:
+            msg = snap["status"] or "No devices found - tap Scan to try again"
+            rows.append((msg, self._start_bt_scan, None))
+        self._set_scroll_rows(rows, top=TOP + 72)
+
+    def _start_bt_scan(self):
+        net_control.bluetooth.scan_async()
+        self._refresh_bt_rows()
+
+    def _bt_row_tap(self, device):
+        def handler():
+            self._bt_target = device
+            if device.get("connected"):
+                self._build_bt_actions()
+            elif device.get("paired"):
+                net_control.bluetooth.connect_async(device["mac"])
+                self._refresh_bt_rows()
+            else:
+                net_control.bluetooth.pair_async(device["mac"])
+                self._refresh_bt_rows()
+        return handler
+
+    def _build_bt_actions(self):
+        self.section = "bt_actions"
+        y = SCREEN_H // 2 - 60
+        self.buttons = [
+            Button(SCREEN_W // 2 - 110, y, 220, 44, "Disconnect",
+                   self._bt_disconnect_target, font=FONT_MD),
+            Button(SCREEN_W // 2 - 110, y + 54, 220, 44, "Remove Device",
+                   self._bt_remove_target, font=FONT_MD, bg=(150, 60, 60)),
+            Button(SCREEN_W // 2 - 110, y + 108, 220, 40, "Cancel",
+                   self._cancel_bt_action, font=FONT_SM),
+        ]
+
+    def _bt_disconnect_target(self):
+        net_control.bluetooth.disconnect_async(self._bt_target["mac"])
+        self._cancel_bt_action()
+
+    def _bt_remove_target(self):
+        net_control.bluetooth.remove_async(self._bt_target["mac"])
+        self._cancel_bt_action()
+
+    def _cancel_bt_action(self):
+        self._bt_target = None
+        self.section = "bluetooth"
+        self._build_bluetooth()
+
+    # -- tap dispatch: password keyboard needs its own hook ------------------
+    def on_tap(self, x, y):
+        if self.section == "wifi_password" and \
+                self._wifi_keyboard.on_tap(x, y, self._wifi_password_key):
+            return True
+        if self.section == "device_rename" and \
+                self._rename_keyboard.on_tap(x, y, self._device_rename_key):
+            return True
+        if self.section not in SCROLL_SECTIONS:
+            return super().on_tap(x, y)
+        return self._scroll_on_tap(x, y)
 
     # -- Security / PIN lock -------------------------------------------------
     def _build_security(self):
@@ -465,7 +687,6 @@ class SettingsApp(App):
             name = entry.get("app_name")
             if name in self.os.apps:
                 del self.os.apps[name]
-            self.os.folder_members.discard(name)
         self._pending_uninstall = None
         self.section = "apps"
         self._build_apps()
@@ -486,14 +707,95 @@ class SettingsApp(App):
         theme.set("developer_mode", not theme.get("developer_mode"))
         self._build_developer()
 
+    # -- power --------------------------------------------------------------
+    def _build_power(self):
+        self.buttons = [
+            Button(SCREEN_W // 2 - 100, TOP + 60, 200, 46,
+                   "Restart Kos", self._confirm_restart, font=FONT_SM),
+            Button(SCREEN_W // 2 - 100, TOP + 116, 200, 46,
+                   "Shut Down", self._confirm_shutdown, font=FONT_SM, bg=(150, 60, 60)),
+            self._back_button(),
+            self._home_button(SCREEN_W - 106),
+        ]
+
+    def _confirm_restart(self):
+        self.section = "power_confirm"
+        self._power_action = "restart"
+        self.buttons = [
+            Button(SCREEN_W // 2 - 130, SCREEN_H // 2 + 10, 120, 46, "Restart",
+                   self._do_restart, font=FONT_MD, bg=(180, 120, 40)),
+            Button(SCREEN_W // 2 + 10, SCREEN_H // 2 + 10, 120, 46, "Cancel",
+                   self._goto("power"), font=FONT_MD),
+        ]
+
+    def _confirm_shutdown(self):
+        self.section = "power_confirm"
+        self._power_action = "shutdown"
+        self.buttons = [
+            Button(SCREEN_W // 2 - 130, SCREEN_H // 2 + 10, 120, 46, "Shut Down",
+                   self._do_shutdown, font=FONT_MD, bg=(180, 60, 60)),
+            Button(SCREEN_W // 2 + 10, SCREEN_H // 2 + 10, 120, 46, "Cancel",
+                   self._goto("power"), font=FONT_MD),
+        ]
+
+    def _do_restart(self):
+        import subprocess
+        try:
+            self.os.lcd.close()
+        except Exception:
+            pass
+        try:
+            subprocess.Popen(["sudo", "reboot"])
+        except Exception:
+            # not on real hardware / no sudo -- just restart the OS process
+            import sys
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def _do_shutdown(self):
+        import subprocess
+        try:
+            subprocess.run(["sudo", "shutdown", "-h", "now"], timeout=5)
+        except Exception as e:
+            self.section = "power"
+            self._build_power()
+            self.status_flash = f"Shutdown unavailable: {e}"
+
     # -- about ------------------------------------------------------------
     def _build_about(self):
         self.buttons = [
+            Button(SCREEN_W // 2 - 100, SCREEN_H - 190, 200, 40,
+                   "Rename This Device", self._start_device_rename, font=FONT_SM),
             Button(SCREEN_W // 2 - 100, SCREEN_H - 140, 200, 44,
                    "Reset all settings", self._reset, font=FONT_SM),
             self._back_button(),
             self._home_button(SCREEN_W - 106),
         ]
+
+    def _start_device_rename(self):
+        self.section = "device_rename"
+        self._device_name_draft = theme.get("device_name") or "Kos Device"
+        self._rename_keyboard = Keyboard(4, SCREEN_H - KEYBOARD_H, SCREEN_W - 8, KEYBOARD_H - 4)
+        self.buttons = [
+            Button(16, SCREEN_H - KEYBOARD_H - 44, 90, 36, "Cancel", self._cancel_device_rename, font=FONT_SM),
+            Button(SCREEN_W - 106, SCREEN_H - KEYBOARD_H - 44, 90, 36, "Save", self._save_device_rename, font=FONT_SM),
+        ]
+
+    def _device_rename_key(self, val):
+        if val == "BACKSPACE":
+            self._device_name_draft = self._device_name_draft[:-1]
+        elif val == "ENTER":
+            self._save_device_rename()
+        elif len(self._device_name_draft) < 24:
+            self._device_name_draft += val
+
+    def _cancel_device_rename(self):
+        self.section = "about"
+        self._build_about()
+
+    def _save_device_rename(self):
+        theme.set("device_name", self._device_name_draft.strip() or "Kos Device")
+        self.section = "about"
+        self._build_about()
 
     def _reset(self):
         theme.reset()
@@ -503,15 +805,23 @@ class SettingsApp(App):
     def draw(self, draw, canvas):
         titles = {"menu": "Settings", "display": "Display", "sound": "Sound",
                   "theme": "Theme", "wallpaper": "Wallpaper",
-                  "wallpaper_photos": "Choose a Photo", "network": "Wi-Fi & Bluetooth",
+                  "wallpaper_photos": "Choose a Photo", "wifi": "Wi-Fi",
+                  "wifi_password": "Enter Wi-Fi Password", "wifi_actions": "Network",
+                  "bluetooth": "Bluetooth", "bt_actions": "Device",
                   "security": "Security", "security_verify": "Enter Current PIN",
                   "security_setpin": "Set New PIN", "datetime": "Date & Time",
                   "apps": "Installed Apps", "apps_confirm_uninstall": "Confirm Uninstall",
-                  "developer": "Developer", "about": "About"}
+                  "developer": "Developer", "power": "Power",
+                  "power_confirm": "Confirm", "device_rename": "Rename This Device",
+                  "about": "About"}
         draw.text((SCREEN_W // 2, TOP), titles.get(self.section, "Settings"),
                    font=FONT_LG, fill=theme.fg_color(), anchor="mm")
 
-        if self.section in SCROLL_SECTIONS:
+        if self.section == "wifi":
+            self._draw_wifi_rows(draw)
+        elif self.section == "bluetooth":
+            self._draw_bt_rows(draw)
+        elif self.section in SCROLL_SECTIONS:
             self._draw_scroll_rows(draw)
         elif self.section == "display":
             self._draw_display(draw)
@@ -519,10 +829,22 @@ class SettingsApp(App):
             self._draw_sound(draw)
         elif self.section == "theme":
             self._draw_theme(draw)
+        elif self.section == "wifi_password":
+            self._draw_wifi_password(draw)
+        elif self.section == "wifi_actions":
+            self._draw_wifi_actions(draw)
+        elif self.section == "bt_actions":
+            self._draw_bt_actions(draw)
         elif self.section in ("security_verify", "security_setpin"):
             self._draw_pin_screen(draw)
         elif self.section == "apps_confirm_uninstall":
             self._draw_confirm_uninstall(draw)
+        elif self.section == "power_confirm":
+            self._draw_power_confirm(draw)
+        elif self.section == "power":
+            self._draw_power(draw)
+        elif self.section == "device_rename":
+            self._draw_device_rename(draw)
         elif self.section == "about":
             self._draw_about(draw)
 
@@ -590,16 +912,116 @@ class SettingsApp(App):
         draw.text((SCREEN_W // 2, SCREEN_H // 2 - 40), f"Uninstall \"{name}\"?",
                    font=FONT_MD, fill=(230, 90, 90), anchor="mm", align="center")
 
+    # -- Wi-Fi / Bluetooth row decoration -------------------------------------
+    def _signal_bars(self, signal):
+        if signal >= 85:
+            return 4
+        if signal >= 60:
+            return 3
+        if signal >= 30:
+            return 2
+        return 1
+
+    def _draw_wifi_rows(self, draw):
+        for label, handler, ry, rh, meta in self._scroll_rows:
+            sy = self.scroll.y + (ry - self.scroll.offset)
+            if sy + rh < self.scroll.y or sy > self.scroll.y + self.scroll.h:
+                continue
+            connected = bool(meta and meta.get("connected"))
+            bg = theme.accent_color() if connected else theme.card_color()
+            draw.rounded_rectangle([20, sy, SCREEN_W - 20, sy + rh], radius=12, fill=bg)
+            draw.text((34, sy + rh // 2), label, font=FONT_SM, fill=(255, 255, 255) if connected
+                       else theme.fg_color(), anchor="lm")
+            if meta:
+                icon_x = SCREEN_W - 34
+                if meta.get("secure"):
+                    draw.text((icon_x, sy + rh // 2), "\U0001F512", font=FONT_SM,
+                               fill=theme.fg_color(), anchor="mm")
+                    icon_x -= 22
+                bars = self._signal_bars(meta.get("signal", 0))
+                for b in range(4):
+                    bh = 4 + b * 3
+                    bx = icon_x - 16 + b * 6
+                    by = sy + rh // 2 + 7 - bh
+                    color = theme.fg_color() if b < bars else (110, 110, 118)
+                    draw.rectangle([bx, by, bx + 4, sy + rh // 2 + 7], fill=color)
+        self.scroll.draw_scrollbar(draw, theme.accent_color())
+
+    def _draw_bt_rows(self, draw):
+        for label, handler, ry, rh, meta in self._scroll_rows:
+            sy = self.scroll.y + (ry - self.scroll.offset)
+            if sy + rh < self.scroll.y or sy > self.scroll.y + self.scroll.h:
+                continue
+            connected = bool(meta and meta.get("connected"))
+            bg = theme.accent_color() if connected else theme.card_color()
+            draw.rounded_rectangle([20, sy, SCREEN_W - 20, sy + rh], radius=12, fill=bg)
+            draw.text((34, sy + rh // 2), label, font=FONT_SM, fill=(255, 255, 255) if connected
+                       else theme.fg_color(), anchor="lm")
+            if meta and meta.get("paired") and not connected:
+                draw.text((SCREEN_W - 34, sy + rh // 2), "\u2713", font=FONT_SM,
+                           fill=theme.fg_color(), anchor="mm")
+        self.scroll.draw_scrollbar(draw, theme.accent_color())
+
+    def _draw_wifi_password(self, draw):
+        ssid = self._wifi_target["ssid"] if self._wifi_target else ""
+        draw.text((SCREEN_W // 2, TOP + 34), ssid, font=FONT_MD,
+                   fill=theme.fg_color(), anchor="mm")
+        draw.rounded_rectangle([16, TOP + 56, SCREEN_W - 16, TOP + 96], radius=8,
+                                fill=theme.card_color())
+        shown = "\u2022" * len(self._wifi_password)
+        draw.text((26, TOP + 76), shown or "Password", font=FONT_SM,
+                   fill=theme.fg_color() if shown else (140, 140, 150), anchor="lm")
+        self._wifi_keyboard.draw(draw)
+
+    def _draw_wifi_actions(self, draw):
+        ssid = self._wifi_target["ssid"] if self._wifi_target else ""
+        draw.text((SCREEN_W // 2, SCREEN_H // 2 - 90), ssid, font=FONT_MD,
+                   fill=theme.fg_color(), anchor="mm")
+
+    def _draw_bt_actions(self, draw):
+        name = self._bt_target["name"] if self._bt_target else ""
+        draw.text((SCREEN_W // 2, SCREEN_H // 2 - 90), name, font=FONT_MD,
+                   fill=theme.fg_color(), anchor="mm")
+
+    def _draw_power(self, draw):
+        if self.status_flash:
+            draw.text((SCREEN_W // 2, TOP + 180), self.status_flash, font=FONT_SM,
+                       fill=(230, 90, 90), anchor="mm", align="center")
+
+    def _draw_power_confirm(self, draw):
+        if self._power_action == "shutdown":
+            text = "Shut down Kos?\nMake sure you're ready to\nunplug or press the power button."
+            color = (230, 90, 90)
+        else:
+            text = "Restart Kos?"
+            color = (230, 170, 60)
+        draw.text((SCREEN_W // 2, SCREEN_H // 2 - 50), text, font=FONT_MD,
+                   fill=color, anchor="mm", align="center")
+
+    def _draw_device_rename(self, draw):
+        draw.rounded_rectangle([16, TOP + 30, SCREEN_W - 16, TOP + 70], radius=8,
+                                fill=theme.card_color())
+        draw.text((26, TOP + 50), self._device_name_draft or "Device name", font=FONT_SM,
+                   fill=theme.fg_color(), anchor="lm")
+        self._rename_keyboard.draw(draw)
+
     def _draw_about(self, draw):
+        try:
+            total, used, free = shutil.disk_usage("/")
+            storage_line = f"Storage: {used // (1024**3)}GB used / {total // (1024**3)}GB"
+        except Exception:
+            storage_line = "Storage: unavailable"
+
         lines = [
-            "PiOS", "",
+            theme.get("device_name") or "Kos Device", "",
             "A tiny touchscreen OS for the",
             "Raspberry Pi + Waveshare 3.5\"",
             "LCD and UPS HAT (C).", "",
             f"Theme: {theme.get('theme')}",
             f"Sound: {'On' if theme.get('sound_enabled') else 'Off'}",
+            storage_line,
         ]
-        y = TOP + 50
+        y = TOP + 44
         for line in lines:
             draw.text((SCREEN_W // 2, y), line, font=FONT_SM, fill=theme.fg_color(), anchor="mm")
-            y += 24
+            y += 22

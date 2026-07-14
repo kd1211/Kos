@@ -31,7 +31,7 @@ class TerminalApp(App):
 
     def on_open(self):
         self.cwd = os.path.expanduser("~")
-        self.scrollback = [f"PiOS Terminal -- {self.cwd}", ""]
+        self.scrollback = [f"Kos Terminal -- {self.cwd}", ""]
         self.draft = ""
         self.history = []
         self.hist_index = None

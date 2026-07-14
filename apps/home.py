@@ -31,7 +31,7 @@ from ui.framework import App, Button, Keyboard, SCREEN_W, SCREEN_H, STATUS_BAR_H
     FONT_LG, FONT_SM, FONT_MD
 from apps.app_store_app import _load_registry, _save_registry, INSTALL_DIR
 
-LAYOUT_PATH = os.path.expanduser("~/.PIos_home_layout.json")
+LAYOUT_PATH = os.path.expanduser("~/.kos_home_layout.json")
 ICONS_PER_PAGE = 9      # only used to size the *initial* auto layout
 COLS = 3
 CONTENT_TOP = STATUS_BAR_H + 46

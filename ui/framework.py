@@ -18,12 +18,32 @@ battery on the UPS HAT (C) -- tap anywhere to wake back up.
 
 import os
 import bisect
+import threading
 import time
+import traceback
 from PIL import Image, ImageDraw, ImageFont
 
 from ui import theme
 from ui import sound
+from ui import net_control
+from ui import notifications
 from ui._font_coverage import DEJAVU_RANGES
+
+CRASH_LOG = os.path.expanduser("~/.kos_crash.log")
+
+
+def _log_runtime_crash(app_name, exc):
+    """Same log file main.py's boot-time crash handler writes to, so
+    there's one place to look regardless of whether Kos never made it
+    to a first frame or crashed later inside a specific app (including
+    a user-installed .phoneapp)."""
+    try:
+        with open(CRASH_LOG, "a") as f:
+            f.write(f"\n--- runtime crash in '{app_name}' at "
+                     f"{time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        pass
 
 SCREEN_W = 320
 SCREEN_H = 480
@@ -151,7 +171,7 @@ ImageDraw.ImageDraw.text = _text_with_fallback
 # These four are seeded from whatever theme was saved on disk at import
 # time, and stay around as sane static defaults for any app/screen that
 # imports them directly (e.g. `from ui.framework import ACCENT`). Anything
-# drawn *inside this module* (status bar, Button, Keyboard, FolderView)
+# drawn *inside this module* (status bar, Button, Keyboard, lock screen)
 # instead re-reads ui.theme live on every frame, so it repaints instantly
 # when the user changes the theme in Settings -- no restart needed.
 BG_COLOR = theme.bg_color()
@@ -382,6 +402,16 @@ class App:
     name = "App"
     icon = "?"
 
+    # Most screens are static and only need to redraw in response to a
+    # touch (the run loop below skips rendering otherwise, to keep the
+    # SPI bus and CPU free while idle). Apps that animate on their own
+    # timer -- games with continuous motion, the emulator while a ROM is
+    # actually running -- set this True (either as a flat `self.wants_animation
+    # = True` in on_open, or as a @property for state-dependent cases
+    # like EmulatorApp) so the OS keeps rendering them every frame
+    # regardless of touch state.
+    wants_animation = False
+
     def __init__(self, os_ref):
         self.os = os_ref
         self.buttons = []
@@ -445,32 +475,6 @@ def build_grid(names, get_icon, on_select, top=None, cols=3, bottom_pad=10):
     return buttons
 
 
-class FolderView(App):
-    """A one-level-deep folder: shows a grid of the apps assigned to it,
-    plus a Back button that returns to the top-level Home screen."""
-
-    def __init__(self, os_ref, title, member_names, icon="\U0001F4C1"):
-        super().__init__(os_ref)
-        self.name = title
-        self.icon = icon
-        self.title = title
-        self.member_names = member_names
-
-    def on_open(self):
-        self.buttons = build_grid(
-            self.member_names, lambda n: self.os.apps[n].icon,
-            lambda n: self.os.open_app(n), top=STATUS_BAR_H + 60)
-        self.buttons.append(
-            Button(SCREEN_W // 2 - 60, SCREEN_H - 56, 120, 42,
-                   "Back", self.os.go_home, font=FONT_MD))
-
-    def draw(self, draw, canvas):
-        draw.text((SCREEN_W // 2, STATUS_BAR_H + 28), self.title, font=FONT_LG,
-                   fill=theme.fg_color(), anchor="mm")
-        for b in self.buttons:
-            b.draw(draw)
-
-
 class PhoneOS:
     """Owns the frame loop: render -> push to LCD -> poll touch -> dispatch."""
 
@@ -485,7 +489,6 @@ class PhoneOS:
         self._battery_last_read = 0
         self.sleeping = False
         self._prev_brightness = theme.get("brightness")
-        self.folder_members = set()
         self._last_activity = time.time()
 
         # -- PIN lock screen state (enforced here so every app benefits,
@@ -495,29 +498,81 @@ class PhoneOS:
         self._lock_error = None
         self._lock_keys = self._build_lock_keys()
 
+        # -- Quick Settings / Notifications panel, reachable by swiping
+        # down from (or tapping) the status bar from anywhere in the OS,
+        # the same way the lock screen is handled above rather than as
+        # a per-app feature --
+        self.panel_open = False
+        self._panel_press_start = None
+        self._panel_buttons = []
+        self._panel_radio_state = {"wifi": None, "bluetooth": None}
+        self._panel_slider_drag = None   # "brightness" | "volume" | None
+
         try:
             self.lcd.set_backlight(self._prev_brightness)
         except Exception:
             pass
 
+        # reused every frame instead of allocating a fresh Image each
+        # time -- every app already fully repaints whatever region it
+        # owns (that's how this immediate-mode renderer has always
+        # worked), so render() just needs to blank the whole canvas to
+        # the theme background first, same guarantee a fresh Image.new()
+        # gave for free, without paying the allocation cost every frame
+        self._canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), theme.bg_color())
+
     def register_app(self, app_cls):
         self.apps[app_cls.name] = app_cls(self)
 
-    def register_folder(self, title, member_names, icon="\U0001F4C1"):
-        """Group existing apps into a folder shown on the Home screen.
-        The member apps stay registered normally, but Home will hide
-        them and show the folder icon instead."""
-        self.apps[title] = FolderView(self, title, member_names, icon)
-        self.folder_members.update(member_names)
-
     def open_app(self, name):
         if self.current_app:
-            self.current_app.on_close()
-        self.current_app = self.apps[name]
-        self.current_app.on_open()
+            try:
+                self.current_app.on_close()
+            except Exception as e:
+                _log_runtime_crash(self.current_app.name, e)
+        try:
+            self.current_app = self.apps[name]
+            self.current_app.on_open()
+        except Exception as e:
+            _log_runtime_crash(name, e)
+            try:
+                notifications.post("App failed to open", f"{name} hit an error", source="System")
+            except Exception:
+                pass
+            if name != "Home":
+                self.go_home()
+            else:
+                # Home itself is broken -- don't recurse forever trying to
+                # fall back to it; leave the screen mostly blank (still
+                # shows the status bar, so it's clearly not a dead device)
+                # rather than crashing the whole process
+                self.current_app = None
 
     def go_home(self):
         self.open_app("Home")
+
+    # -- crash recovery for per-frame touch dispatch / drawing --------------
+    # A bug in any single app -- including a user-installed .phoneapp --
+    # shouldn't be able to take the whole OS down. Every place that calls
+    # into the current app goes through here instead of calling it
+    # directly, so a crash gets logged and recovered from (falls back to
+    # Home) rather than propagating out of run() and killing the process.
+    def _safe_app_call(self, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as e:
+            self._handle_app_crash(e)
+
+    def _handle_app_crash(self, exc):
+        app_name = self.current_app.name if self.current_app else "?"
+        _log_runtime_crash(app_name, exc)
+        try:
+            notifications.post("App crashed", f"{app_name} hit an error and was closed",
+                                source="System")
+        except Exception:
+            pass
+        if self.current_app is None or self.current_app.name != "Home":
+            self.go_home()
 
     # -- power / sleep -----------------------------------------------
     def enter_sleep(self, current_brightness=90):
@@ -600,6 +655,214 @@ class PhoneOS:
             draw.rounded_rectangle([kx, ky, kx + kw, ky + kh], radius=10, fill=theme.card_color())
             draw.text((kx + kw // 2, ky + kh // 2), lab, font=FONT_LG, fill=fg, anchor="mm")
 
+    # -- Quick Settings / Notifications panel -----------------------------
+    # A combined shade, swiped down (or tapped open) from the status bar,
+    # reachable from anywhere in the OS -- not locked to Home or any one
+    # app, the same way a phone's notification shade works.
+    PANEL_TOP = STATUS_BAR_H
+    PANEL_BOTTOM = 420
+    PANEL_TILE_Y = PANEL_TOP + 10
+    PANEL_TILE_H = 56
+    PANEL_SLIDER_Y0 = PANEL_TILE_Y + 2 * (PANEL_TILE_H + 8) + 8
+    PANEL_SLIDER_H = 30
+    PANEL_SLIDER_GAP = 40
+    PANEL_NOTIF_Y = PANEL_SLIDER_Y0 + 2 * PANEL_SLIDER_GAP + 14
+
+    _PANEL_TOGGLES = ["wifi", "bluetooth", "flashlight", "airplane", "battery_saver", "developer"]
+    _PANEL_TOGGLE_LABELS = {"wifi": "Wi-Fi", "bluetooth": "Bluetooth", "flashlight": "Flashlight",
+                             "airplane": "Airplane", "battery_saver": "Battery\nSaver",
+                             "developer": "Developer"}
+    _PANEL_TOGGLE_ICONS = {"wifi": "\U0001F4F6", "bluetooth": "\U0001F517",
+                            "flashlight": "\U0001F526", "airplane": "\u2708",
+                            "battery_saver": "\U0001F50B", "developer": "\U0001F6E0"}
+
+    def _panel_on_open(self):
+        self.panel_open = True
+        self._panel_radio_state = {"wifi": None, "bluetooth": None}
+        self._panel_build_tiles()
+
+        def query():
+            wifi_on = net_control.wifi.is_radio_on()
+            bt_on = net_control.bluetooth.is_powered_on()
+            self._panel_radio_state = {"wifi": wifi_on, "bluetooth": bt_on}
+        threading.Thread(target=query, daemon=True).start()
+
+    def _panel_close(self):
+        self.panel_open = False
+        self._panel_slider_drag = None
+
+    def _panel_build_tiles(self):
+        self._panel_buttons = []
+        cols, rows = 3, 2
+        margin = 8
+        tile_w = (SCREEN_W - margin * (cols + 1)) // cols
+        for i, key in enumerate(self._PANEL_TOGGLES):
+            r, c = divmod(i, cols)
+            x = margin + c * (tile_w + margin)
+            y = self.PANEL_TILE_Y + r * (self.PANEL_TILE_H + 8)
+            self._panel_buttons.append(
+                Button(x, y, tile_w, self.PANEL_TILE_H, "", (lambda k=key: self._panel_toggle(k))))
+
+    def _panel_toggle_state(self, key):
+        if key == "wifi":
+            return bool(self._panel_radio_state.get("wifi"))
+        if key == "bluetooth":
+            return bool(self._panel_radio_state.get("bluetooth"))
+        if key == "airplane":
+            return theme.get("airplane_mode")
+        if key == "battery_saver":
+            return theme.get("battery_saver")
+        if key == "developer":
+            return theme.get("developer_mode")
+        return False
+
+    def _panel_toggle(self, key):
+        if key == "flashlight":
+            self._panel_close()
+            self.open_app("Flashlight")
+            return
+        if key == "wifi":
+            new_state = not self._panel_toggle_state("wifi")
+            self._panel_radio_state["wifi"] = new_state
+            net_control.wifi.set_radio(new_state)
+        elif key == "bluetooth":
+            new_state = not self._panel_toggle_state("bluetooth")
+            self._panel_radio_state["bluetooth"] = new_state
+            net_control.bluetooth.set_power(new_state)
+        elif key == "airplane":
+            new_state = not theme.get("airplane_mode")
+            theme.set("airplane_mode", new_state)
+            self._panel_radio_state["wifi"] = not new_state
+            self._panel_radio_state["bluetooth"] = not new_state
+            net_control.wifi.set_radio(not new_state)
+            net_control.bluetooth.set_power(not new_state)
+        elif key == "battery_saver":
+            new_state = not theme.get("battery_saver")
+            theme.set("battery_saver", new_state)
+            if new_state:
+                b = min(theme.get("brightness"), 40)
+                theme.set("brightness", b)
+                try:
+                    self.lcd.set_backlight(b)
+                except Exception:
+                    pass
+                if not theme.get("sleep_timeout") or theme.get("sleep_timeout") > 60:
+                    theme.set("sleep_timeout", 60)
+        elif key == "developer":
+            theme.set("developer_mode", not theme.get("developer_mode"))
+
+    def _panel_slider_rect(self, which):
+        y = self.PANEL_SLIDER_Y0 if which == "brightness" else self.PANEL_SLIDER_Y0 + self.PANEL_SLIDER_GAP
+        return (20, y, SCREEN_W - 40, self.PANEL_SLIDER_H)
+
+    def _panel_hit_slider(self, x, y):
+        for which in ("brightness", "volume"):
+            sx, sy, sw, sh = self._panel_slider_rect(which)
+            if sx - 10 <= x <= sx + sw + 10 and sy - 10 <= y <= sy + sh + 10:
+                return which
+        return None
+
+    def _panel_set_slider(self, which, x):
+        sx, sy, sw, sh = self._panel_slider_rect(which)
+        frac = max(0.0, min(1.0, (x - sx) / sw))
+        val = int(frac * 100)
+        if which == "brightness":
+            theme.set("brightness", max(1, val))
+            try:
+                self.lcd.set_backlight(max(1, val))
+            except Exception:
+                pass
+        else:
+            theme.set("volume", val)
+            sound.refresh_volume()
+
+    def _panel_notif_rows(self):
+        return notifications.list_all()[:3]
+
+    def _panel_on_tap(self, x, y):
+        if y > self.PANEL_BOTTOM:
+            self._panel_close()
+            return
+        for b in self._panel_buttons:
+            if b.contains(x, y):
+                b.on_tap()
+                return
+        slider = self._panel_hit_slider(x, y)
+        if slider:
+            self._panel_slider_drag = slider
+            self._panel_set_slider(slider, x)
+            return
+        # "Clear All" sits just above the notification list
+        clear_y = self.PANEL_NOTIF_Y
+        if clear_y <= y <= clear_y + 24 and SCREEN_W - 90 <= x <= SCREEN_W - 20:
+            notifications.clear_all()
+            return
+        # dismiss ('x') on an individual notification row
+        row_h = 40
+        for i, n in enumerate(self._panel_notif_rows()):
+            ry = self.PANEL_NOTIF_Y + 30 + i * row_h
+            if ry <= y <= ry + row_h - 4 and SCREEN_W - 34 <= x <= SCREEN_W - 14:
+                notifications.dismiss(n["id"])
+                return
+            if ry <= y <= ry + row_h - 4:
+                notifications.mark_read(n["id"])
+                return
+
+    def _panel_on_touch_move(self, x, y):
+        if self._panel_slider_drag:
+            self._panel_set_slider(self._panel_slider_drag, x)
+
+    def _panel_on_touch_up(self):
+        self._panel_slider_drag = None
+
+    def _draw_panel(self, draw):
+        draw.rectangle([0, self.PANEL_TOP, SCREEN_W, self.PANEL_BOTTOM], fill=(22, 22, 28))
+
+        for key, b in zip(self._PANEL_TOGGLES, self._panel_buttons):
+            on = self._panel_toggle_state(key)
+            unknown = key in ("wifi", "bluetooth") and self._panel_radio_state.get(key) is None
+            bg = (90, 90, 100) if unknown else (theme.accent_color() if on else (46, 46, 54))
+            draw.rounded_rectangle([b.x, b.y, b.x + b.w, b.y + b.h], radius=10, fill=bg)
+            draw.text((b.x + b.w // 2, b.y + 18), self._PANEL_TOGGLE_ICONS[key], font=FONT_MD,
+                       fill=(255, 255, 255), anchor="mm")
+            draw.text((b.x + b.w // 2, b.y + b.h - 12), self._PANEL_TOGGLE_LABELS[key],
+                       font=FONT_SM, fill=(255, 255, 255), anchor="mm", align="center")
+
+        for which, label, val in (("brightness", "Brightness", theme.get("brightness")),
+                                   ("volume", "Volume", theme.get("volume"))):
+            sx, sy, sw, sh = self._panel_slider_rect(which)
+            draw.rounded_rectangle([sx, sy, sx + sw, sy + sh], radius=8, fill=(46, 46, 54))
+            fill_w = int(sw * val / 100)
+            draw.rounded_rectangle([sx, sy, sx + max(sh, fill_w), sy + sh], radius=8,
+                                    fill=theme.accent_color())
+            draw.text((sx + 10, sy + sh // 2), f"{label} {val}%", font=FONT_SM,
+                       fill=(255, 255, 255), anchor="lm")
+
+        unread = notifications.unread_count()
+        draw.text((20, self.PANEL_NOTIF_Y + 12), f"Notifications{f' ({unread} new)' if unread else ''}",
+                   font=FONT_SM, fill=theme.fg_color(), anchor="lm")
+        draw.text((SCREEN_W - 20, self.PANEL_NOTIF_Y + 12), "Clear All", font=FONT_SM,
+                   fill=(230, 90, 90), anchor="rm")
+
+        rows = self._panel_notif_rows()
+        row_h = 40
+        if not rows:
+            draw.text((SCREEN_W // 2, self.PANEL_NOTIF_Y + 50), "No notifications", font=FONT_SM,
+                       fill=(140, 140, 150), anchor="mm")
+        for i, n in enumerate(rows):
+            ry = self.PANEL_NOTIF_Y + 30 + i * row_h
+            bg = (38, 38, 46) if n["read"] else (50, 58, 72)
+            draw.rounded_rectangle([12, ry, SCREEN_W - 12, ry + row_h - 4], radius=8, fill=bg)
+            draw.text((22, ry + 8), n["title"], font=FONT_SM, fill=theme.fg_color(), anchor="lm")
+            if n["body"]:
+                body = n["body"] if len(n["body"]) <= 34 else n["body"][:33] + "\u2026"
+                draw.text((22, ry + 24), body, font=FONT_SM, fill=(160, 160, 170), anchor="lm")
+            draw.text((SCREEN_W - 24, ry + (row_h - 4) // 2), "\u2715", font=FONT_SM,
+                       fill=(150, 150, 160), anchor="mm")
+
+        draw.rounded_rectangle([SCREEN_W // 2 - 20, self.PANEL_BOTTOM - 10, SCREEN_W // 2 + 20,
+                                 self.PANEL_BOTTOM - 6], radius=2, fill=(90, 90, 100))
+
     # -- battery -------------------------------------------------------
     def _read_battery(self):
         now = time.time()
@@ -609,7 +872,20 @@ class PhoneOS:
             except Exception:
                 pass
             self._battery_last_read = now
+            self._check_low_battery(self._battery_cache)
         return self._battery_cache
+
+    def _check_low_battery(self, batt):
+        # a one-shot warning, not a repeat-every-2-seconds spam: only
+        # fires again after charging or climbing back above 25% resets it
+        pct = batt.get("percent", 100)
+        charging = batt.get("charging", False)
+        if charging or pct > 25:
+            self._low_battery_warned = False
+            return
+        if pct <= 15 and not getattr(self, "_low_battery_warned", False):
+            self._low_battery_warned = True
+            notifications.post("Low battery", f"{pct}% remaining - plug in soon", source="Battery")
 
     def _draw_status_bar(self, draw):
         fg = theme.fg_color()
@@ -632,6 +908,19 @@ class PhoneOS:
             draw.text((SCREEN_W // 2 + 24, STATUS_BAR_H // 2), "DEV",
                        font=FONT_SM, fill=(255, 180, 60), anchor="mm")
 
+        # a small bell + unread count, just left of the battery indicator,
+        # so there's an at-a-glance hint to swipe down even before you
+        # discover the gesture
+        unread = notifications.unread_count()
+        if unread:
+            bell_x = SCREEN_W - 96
+            draw.text((bell_x, STATUS_BAR_H // 2), "\U0001F514", font=FONT_SM,
+                       fill=fg, anchor="mm")
+            badge_x = bell_x + 10
+            draw.ellipse([badge_x, 3, badge_x + 14, 17], fill=(230, 90, 90))
+            draw.text((badge_x + 7, 10), str(min(unread, 9)), font=FONT_SM,
+                       fill=(255, 255, 255), anchor="mm")
+
         batt = self._read_battery()
         pct = batt.get("percent", 100)
         charging = batt.get("charging", False)
@@ -649,17 +938,33 @@ class PhoneOS:
 
     def render(self):
         if self.sleeping:
-            canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), (0, 0, 0))
-            self.lcd.display(canvas)
+            draw = ImageDraw.Draw(self._canvas)
+            draw.rectangle([0, 0, SCREEN_W, SCREEN_H], fill=(0, 0, 0))
+            self.lcd.display(self._canvas)
             return
-        canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), theme.bg_color())
-        draw = ImageDraw.Draw(canvas)
+        draw = ImageDraw.Draw(self._canvas)
+        draw.rectangle([0, 0, SCREEN_W, SCREEN_H], fill=theme.bg_color())
         self._draw_status_bar(draw)
         if self.locked:
             self._draw_lock_screen(draw)
         elif self.current_app:
-            self.current_app.draw(draw, canvas)
-        self.lcd.display(canvas)
+            try:
+                self.current_app.draw(draw, self._canvas)
+            except Exception as e:
+                self._handle_app_crash(e)
+                # this frame may be left half-drawn -- redraw as Home
+                # immediately so what actually gets pushed to the panel
+                # isn't a garbled broken screen
+                draw.rectangle([0, 0, SCREEN_W, SCREEN_H], fill=theme.bg_color())
+                self._draw_status_bar(draw)
+                if self.current_app:
+                    try:
+                        self.current_app.draw(draw, self._canvas)
+                    except Exception:
+                        pass  # Home itself should never throw; if it does, ship the blank frame
+        if self.panel_open:
+            self._draw_panel(draw)
+        self.lcd.display(self._canvas)
 
     def poll_touch_raw(self):
         """Returns the current touch point every frame, or None.
@@ -681,12 +986,29 @@ class PhoneOS:
         y = max(0, min(SCREEN_H - 1, int(round(y))))
         return (x, y)
 
+    # Target refresh while something's actually happening (touch held,
+    # a touch event just fired, or the current app animates on its own
+    # clock). Idle screens redraw far less often -- IDLE_REDRAW_INTERVAL
+    # is only there to keep the status bar clock/battery%% from looking
+    # frozen, not to chase a frame rate nothing is watching. Together
+    # these matter more for "smoothness" than the render code itself:
+    # every idle frame skipped is SPI bus time and CPU handed straight
+    # back to the very next touch poll, and the sleep after an active
+    # frame only fills whatever time *wasn't* already spent rendering,
+    # instead of unconditionally tacking 50ms onto every single frame
+    # the way this loop used to.
+    ACTIVE_FRAME_INTERVAL = 1 / 30
+    IDLE_POLL_INTERVAL = 0.05
+    IDLE_REDRAW_INTERVAL = 1.0
+
     def run(self):
         self.go_home()
         if theme.get("pin_enabled") and theme.get("pin_code"):
             self.locked = True
+        last_render = 0.0
         try:
             while True:
+                frame_start = time.time()
                 raw = self.poll_touch_raw()
 
                 if self.sleeping:
@@ -694,27 +1016,51 @@ class PhoneOS:
                     if raw:
                         self.wake()
                         self._last_activity = time.time()
+                        last_render = 0.0
                     self.render()
-                    time.sleep(0.05)
+                    time.sleep(self.IDLE_POLL_INTERVAL)
                     continue
 
                 was_down = self._last_touch_state
                 now_down = bool(raw)
+                touch_edge = now_down != was_down
 
                 if now_down and not was_down:
                     self._last_activity = time.time()
                     sound.click()
                     if self.locked:
                         self._lock_on_tap(*raw)
+                    elif self.panel_open:
+                        self._panel_on_tap(*raw)
+                    elif raw[1] < STATUS_BAR_H:
+                        # a touch starting on the status bar either becomes
+                        # a swipe-down (below, on the move branch) or, if
+                        # released without much movement, a tap-to-open
+                        self._panel_press_start = raw
                     elif self.current_app:
-                        self.current_app.on_tap(*raw)
+                        self._safe_app_call(self.current_app.on_tap, *raw)
                 elif now_down and was_down:
                     self._last_activity = time.time()
-                    if not self.locked and self.current_app:
-                        self.current_app.on_touch_move(*raw)
+                    if self.locked:
+                        pass
+                    elif self.panel_open:
+                        self._panel_on_touch_move(*raw)
+                    elif self._panel_press_start is not None:
+                        if raw[1] - self._panel_press_start[1] > 28:
+                            self._panel_on_open()
+                            self._panel_press_start = None
+                    elif self.current_app:
+                        self._safe_app_call(self.current_app.on_touch_move, *raw)
                 elif was_down and not now_down:
-                    if not self.locked and self.current_app:
-                        self.current_app.on_touch_up()
+                    if self.locked:
+                        pass
+                    elif self.panel_open:
+                        self._panel_on_touch_up()
+                    elif self._panel_press_start is not None:
+                        self._panel_on_open()  # released without dragging = tap-to-open
+                        self._panel_press_start = None
+                    elif self.current_app:
+                        self._safe_app_call(self.current_app.on_touch_up)
 
                 self._last_touch_state = now_down
 
@@ -723,9 +1069,27 @@ class PhoneOS:
                 timeout = theme.get("sleep_timeout")
                 if timeout and time.time() - self._last_activity > timeout:
                     self.enter_sleep(theme.get("brightness"))
+                    last_render = 0.0
+                    continue
 
-                self.render()
-                time.sleep(0.05)
+                animating = bool(self.current_app and
+                                 getattr(self.current_app, "wants_animation", False))
+                active = now_down or touch_edge or animating
+
+                now = time.time()
+                if active or (now - last_render) >= self.IDLE_REDRAW_INTERVAL:
+                    self.render()
+                    last_render = now
+
+                if active:
+                    elapsed = time.time() - frame_start
+                    time.sleep(max(0.0, self.ACTIVE_FRAME_INTERVAL - elapsed))
+                else:
+                    # cheap poll while nothing's happening -- still
+                    # responsive (next touch-down is felt within ~50ms)
+                    # without paying render/SPI cost for frames no one
+                    # asked for
+                    time.sleep(self.IDLE_POLL_INTERVAL)
         except KeyboardInterrupt:
             pass
         finally:

@@ -1,4 +1,4 @@
-Fonts bundled with PiOS (see ui/framework.py's load_font)
+Fonts bundled with Kos (see ui/framework.py's load_font)
 ==========================================================
 
 DejaVuSans.ttf
