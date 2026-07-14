@@ -15,7 +15,8 @@ Built for two specific Waveshare boards:
 2. Connect the LCD's 15PIN cable to the Pi as described on the LCD wiki:
    SPI (DIN/CLK/CS/DC/RST) for the display, I2C (SDA/SCL) for touch,
    plus VCC/GND/BL.
-3. Enable SPI and I2C:
+3. SPI and I2C need to be enabled -- `install.sh` below does this for
+   you automatically. To do it by hand instead:
    ```bash
    sudo raspi-config
    # Interface Options -> SPI -> Enable
@@ -31,21 +32,40 @@ Built for two specific Waveshare boards:
 ## Install
 
 ```bash
+cd pios                 # wherever you cloned/extracted it
+sudo ./install.sh
+```
+
+This installs every dependency (preferring apt's prebuilt ARM packages
+over pip, since compiling pillow/numpy/pygame from source on a Pi Zero
+can take the better part of an hour), enables SPI and I2C, and sets
+PiOS up as a systemd service (`pios.service`) that starts on boot and
+restarts itself if it ever crashes. It installs *in place* -- wherever
+you run it from is where it stays; nothing gets copied elsewhere. Safe
+to re-run any time, including after a System Updater update.
+
+```bash
+sudo systemctl start pios      # start it right now
+sudo systemctl status pios     # check if it's running
+journalctl -u pios -f          # follow its logs live
+```
+
+<details>
+<summary>Installing dependencies by hand instead</summary>
+
+```bash
 sudo apt-get update
-sudo apt-get install -y python3-pip python3-pil python3-numpy python3-spidev python3-smbus
+sudo apt-get install -y python3-pip python3-pil python3-numpy python3-spidev \
+    python3-rpi.gpio python3-smbus python3-smbus2 python3-requests python3-pygame
 pip3 install -r requirements.txt --break-system-packages
 ```
 
-## Run
-
+Run directly with:
 ```bash
 sudo python3 main.py
 ```
-
 (`sudo` is required for GPIO/SPI access, the same as Waveshare's own demos.)
-
-To boot straight into PiOS on power-up, add a line to the pi user's
-crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
+</details>
 
 ## What's included
 
@@ -54,6 +74,13 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
 - `drivers/touch_ft6336u.py` — I2C driver for the FT6336U touch controller.
 - `drivers/ina219_battery.py` — I2C driver for the INA219 fuel gauge on the
   UPS HAT (C), reporting voltage, current, power and estimated battery %.
+- `drivers/camera.py` — wraps `picamera2` for the Camera app. Unlike the
+  three drivers above, which `main.py` assumes are always present (it
+  doesn't even try/except around them -- this OS is built for that
+  specific hardware), a camera is genuinely optional, so this one is
+  instantiated lazily by the Camera app itself and exposes an
+  `.available` flag instead of raising if there's no camera attached or
+  `picamera2` isn't installed.
 - `ui/framework.py` — the "OS": a status bar (clock + live battery icon,
   a DEV tag when Developer Mode is on), a PIN-lock screen shown on
   wake/boot, an `App` base class (tap, drag, and release hooks), a
@@ -65,6 +92,13 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
 - `ui/wallpaper.py` — renders the Home screen background: a few built-in
   gradients, a photo picked from `~/Pictures`, or none (solid theme
   color), cached so a photo wallpaper isn't re-decoded every frame.
+- `ui/net_control.py` — Wi-Fi (via `nmcli`) and Bluetooth (via
+  `bluetoothctl`) scanning/connecting for Settings, entirely on
+  background threads with a lock-protected snapshot the UI polls --
+  scanning a real radio takes several seconds and this OS's render loop
+  is single-threaded, so blocking it would freeze touch input too.
+  Reports "not available" cleanly if those tools/adapters aren't
+  present rather than raising into the UI.
 - `assets/fonts/` — DejaVuSans.ttf (all normal text) and Symbola.ttf (a
   fallback covering the emoji/pictograph glyphs used as app icons --
   the palette, globe, folder, lock, wallpaper, wifi, etc. -- that DejaVu
@@ -84,34 +118,45 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
   `scripts/make_demo_rom.py`) that draws the interpreter's built-in
   hex-digit sprites, just to prove the emulator works out of the box.
   Drop your own legally-obtained `.ch8` files into `roms/` to play more.
-- `apps/` — organized into a flat Home screen plus two folders:
+- `apps/` — every app registers on the top-level Home screen; **Games**
+  and **Tools** start out as folders (see "Folders" below) but that's
+  just the default arrangement, not a fixed structure -- drag icons
+  around and it's whatever you make it.
 
-  **On the Home screen directly:**
   - **Home** — multiple pages of icons (swipe left/right, page dots at
-    the bottom), an optional wallpaper (set in Settings), and an "Edit"
+    the bottom), an optional wallpaper (set in Settings), folders that
+    work the way you'd expect on a phone (see below), and an "Edit"
     mode for rearranging: drag an icon to reorder it, drag it to the
     screen edge to carry it onto the next/previous page, or tap it (in
     Edit mode) for a small Open/Uninstall info sheet
   - **Clock** — live time and date
   - **Battery** — live voltage/current/power/percent from the UPS HAT
   - **Settings** — Display, Sound, Theme, Wallpaper (gradients or a
-    Pictures photo), Wi-Fi & Bluetooth toggles, a PIN lock (enforced by
-    a numeric-keypad lock screen the OS shows on wake/boot), Date &
-    Time, Installed Apps management, Developer Mode (adds a "DEV" tag to
-    the status bar), and About/reset. The menu and any long list here
-    scroll by dragging, the same as File Browser.
+    Pictures photo), real **Wi-Fi** (scan, connect with a password
+    keyboard for secured networks, disconnect, forget) and real
+    **Bluetooth** (scan, pair, connect, disconnect, remove) via `nmcli`
+    and `bluetoothctl` -- the same tools you'd use by hand over SSH, run
+    on a background thread so scanning never freezes the UI -- a PIN
+    lock (enforced by a numeric-keypad lock screen the OS shows on
+    wake/boot), Date & Time, Installed Apps management, Developer Mode
+    (adds a "DEV" tag to the status bar), **Power** (Restart/Shut Down
+    with confirmation), and About (device nickname, storage used,
+    reset). The menu and any long list here scroll by dragging, the
+    same as File Browser.
   - **Paint** — finger-drag drawing with a color palette, eraser, four
     brush sizes, multi-step undo, and one-tap "Save" into the Gallery's
     Pictures folder
   - **Flashlight** — full-brightness white screen / torch
   - **App Store** — browses and installs single-file apps from a GitHub
     repo (see below) -- requires internet and `pip install requests`
-
-  **Inside the "Games" folder:**
   - **Tic-Tac-Toe**, **Memory** (card matching), **Reaction** (whack-a-mole)
   - **RetroArch** — ROM picker + on-screen controls
-
-  **Inside the "Tools" folder:**
+  - **Raycrawl** — an original first-person corridor shooter built on a
+    real grid-DDA raycasting engine (the classic early-90s FPS
+    technique): shaded wall strips, occlusion-correct enemy sprites, a
+    minimap, and press-and-hold touch controls (move/turn/fire).
+    Sub-2ms/frame in testing, so it stays smooth in pure Python on
+    modest hardware.
   - **Calculator**, **Notes**
   - **File Browser** — navigate the filesystem as a drag-to-scroll list
     (no more "page 2/5" buttons), with an "Up" button. Tapping a file
@@ -122,15 +167,24 @@ crontab or a systemd service that runs `sudo python3 /path/to/main.py`.
     file installs it as a new app on the spot, using the same
     single-file install path as the App Store.
   - **Calendar** — month grid, prev/next navigation, quick-add events per day
+  - **Camera** — live viewfinder from the Pi Camera Module (via
+    `picamera2`), a shutter that saves straight into `~/Pictures`
+    alongside Paint's saves, a rule-of-thirds grid overlay, and a
+    mirror toggle. Genuinely optional hardware -- if no camera is
+    attached (or `picamera2` isn't installed) the app still opens
+    cleanly and just says so, the same way Wi-Fi/Bluetooth report
+    "not available" rather than crashing anything.
   - **Weather** — current conditions for a few preset cities via the free
     Open-Meteo API (no key needed) -- requires internet and `pip install requests`
-  - **Browser** — a minimal *text-only* web browser with up to four
-    independent tabs (tab strip under the status bar, "+" to open, "✕" to
-    close) and editable bookmarks (add, rename, re-URL, or delete, saved
-    to `~/.pios_bookmarks.json`) alongside a typed-in URL (on-screen
-    keyboard). Fetches the page and strips it down to readable, paginated
-    text (no images/CSS/JS -- this is a phone-OS-scale "browser", not a
-    full engine)
+  - **Browser** — a *text-only* browser (no images/CSS/JS -- fetches a
+    page and flows its text) but with a real browser's interaction
+    model: a persistent omnibox with Back/Forward/Reload and a bookmark
+    star, real per-tab navigation history (Back/Forward move through
+    already-fetched pages instantly -- no re-fetch), tappable in-page
+    links (rendered in blue, underlined, resolved against the page's
+    URL so relative links work), and a New Tab page showing your
+    bookmarks as a tile grid instead of a plain list. Up to four
+    independent tabs; bookmarks persist to `~/.pios_bookmarks.json`.
   - **System** — CPU temperature, uptime, storage, memory
 
 ### App Store
@@ -160,21 +214,51 @@ the app's `on_tap`, and handle the characters/`"BACKSPACE"`/`"ENTER"`
 tokens it reports back.
 
 ### Folders
-`main.py` groups apps into folders with `os_.register_folder(title, [app_names], icon=...)`.
-Apps assigned to a folder are hidden from the top-level Home screen and
-only reachable by opening that folder; unassigned apps stay on Home.
-Folders are one level deep by design — opening an app from inside a
-folder and tapping its own "Home" button takes you to the top-level
-Home screen, not back into the folder.
+Folders work like they do on a phone, not like a fixed menu structure:
+- **Create one**: in Home's Edit mode, drag an app icon on top of another
+  app icon. They merge into a new folder (default name "New Folder"),
+  which opens immediately with a rename prompt ready.
+- **Add to one**: drag an app icon onto an existing folder's icon.
+- **Open one**: tap it (works whether or not you're in Edit mode) --
+  it opens as an overlay showing its members, not a separate screen.
+- **Rename one**: while it's open, tap its name at the top of the panel.
+- **Remove a member**: with the folder open and Home in Edit mode, drag
+  a member out past the panel's edge -- it lands back on the current
+  Home page, right where you drop it.
+- **Auto-dissolve**: a folder that's down to one member turns back into
+  a plain icon automatically; one with zero members just disappears.
+
+Folders are one level deep by design (no folders-in-folders). The
+layout -- which app or folder is on which page, in what order, and
+what's in each folder -- persists to `~/.pios_home_layout.json`.
+"Games" and "Tools" are just the *default* starting arrangement, seeded
+the first time Home ever runs; after that it's entirely yours to
+rearrange.
 
 ### Quality-of-life touches
 - **Sleep mode**: `Settings -> Sleep display` blanks the screen and cuts
   the backlight to save the UPS HAT's battery; tap anywhere to wake it.
-- **Auto-scaling launcher grid**: the Home screen recalculates icon size
-  so any number of installed apps fits without needing pagination.
+- **Auto-scaling icon grids**: Home and folder overlays both recalculate
+  icon size so their contents fit the available space cleanly.
 - **Drag support**: the framework distinguishes taps (for buttons) from
-  continuous touch-and-drag (for Paint), so both interaction styles work
-  on the same touch driver.
+  continuous touch-and-drag (for Paint, Home's icon rearranging, and
+  ScrollArea-based lists), so all of those interaction styles work on
+  the same touch driver.
+- **Adaptive render loop**: `PhoneOS.run()` only redraws and pushes a
+  new frame to the SPI display when something's actually happening --
+  a touch is held, a touch event just fired, or the current app opts
+  into continuous animation via `wants_animation = True` (games with
+  their own physics clock, Clock's live seconds, the emulator only
+  while a ROM is actually running -- not while just browsing the ROM
+  picker). Idle screens fall back to a light ~1/sec refresh (just
+  enough to keep the status bar clock current) and a cheap 50ms touch
+  poll, so the SPI bus and CPU are free the instant nothing's
+  happening -- and immediately available the instant something is.
+  Active frames use elapsed-time-aware pacing (targets ~30fps by
+  sleeping only whatever's left of the frame budget) instead of a flat
+  delay tacked on regardless of how long rendering already took, and
+  the render target canvas is a single reused buffer rather than a
+  fresh allocation every frame.
 
 ## Notes on tuning for your exact unit
 

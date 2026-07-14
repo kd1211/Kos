@@ -151,7 +151,7 @@ ImageDraw.ImageDraw.text = _text_with_fallback
 # These four are seeded from whatever theme was saved on disk at import
 # time, and stay around as sane static defaults for any app/screen that
 # imports them directly (e.g. `from ui.framework import ACCENT`). Anything
-# drawn *inside this module* (status bar, Button, Keyboard, FolderView)
+# drawn *inside this module* (status bar, Button, Keyboard, lock screen)
 # instead re-reads ui.theme live on every frame, so it repaints instantly
 # when the user changes the theme in Settings -- no restart needed.
 BG_COLOR = theme.bg_color()
@@ -382,6 +382,16 @@ class App:
     name = "App"
     icon = "?"
 
+    # Most screens are static and only need to redraw in response to a
+    # touch (the run loop below skips rendering otherwise, to keep the
+    # SPI bus and CPU free while idle). Apps that animate on their own
+    # timer -- games with continuous motion, the emulator while a ROM is
+    # actually running -- set this True (either as a flat `self.wants_animation
+    # = True` in on_open, or as a @property for state-dependent cases
+    # like EmulatorApp) so the OS keeps rendering them every frame
+    # regardless of touch state.
+    wants_animation = False
+
     def __init__(self, os_ref):
         self.os = os_ref
         self.buttons = []
@@ -445,32 +455,6 @@ def build_grid(names, get_icon, on_select, top=None, cols=3, bottom_pad=10):
     return buttons
 
 
-class FolderView(App):
-    """A one-level-deep folder: shows a grid of the apps assigned to it,
-    plus a Back button that returns to the top-level Home screen."""
-
-    def __init__(self, os_ref, title, member_names, icon="\U0001F4C1"):
-        super().__init__(os_ref)
-        self.name = title
-        self.icon = icon
-        self.title = title
-        self.member_names = member_names
-
-    def on_open(self):
-        self.buttons = build_grid(
-            self.member_names, lambda n: self.os.apps[n].icon,
-            lambda n: self.os.open_app(n), top=STATUS_BAR_H + 60)
-        self.buttons.append(
-            Button(SCREEN_W // 2 - 60, SCREEN_H - 56, 120, 42,
-                   "Back", self.os.go_home, font=FONT_MD))
-
-    def draw(self, draw, canvas):
-        draw.text((SCREEN_W // 2, STATUS_BAR_H + 28), self.title, font=FONT_LG,
-                   fill=theme.fg_color(), anchor="mm")
-        for b in self.buttons:
-            b.draw(draw)
-
-
 class PhoneOS:
     """Owns the frame loop: render -> push to LCD -> poll touch -> dispatch."""
 
@@ -485,7 +469,6 @@ class PhoneOS:
         self._battery_last_read = 0
         self.sleeping = False
         self._prev_brightness = theme.get("brightness")
-        self.folder_members = set()
         self._last_activity = time.time()
 
         # -- PIN lock screen state (enforced here so every app benefits,
@@ -500,15 +483,16 @@ class PhoneOS:
         except Exception:
             pass
 
+        # reused every frame instead of allocating a fresh Image each
+        # time -- every app already fully repaints whatever region it
+        # owns (that's how this immediate-mode renderer has always
+        # worked), so render() just needs to blank the whole canvas to
+        # the theme background first, same guarantee a fresh Image.new()
+        # gave for free, without paying the allocation cost every frame
+        self._canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), theme.bg_color())
+
     def register_app(self, app_cls):
         self.apps[app_cls.name] = app_cls(self)
-
-    def register_folder(self, title, member_names, icon="\U0001F4C1"):
-        """Group existing apps into a folder shown on the Home screen.
-        The member apps stay registered normally, but Home will hide
-        them and show the folder icon instead."""
-        self.apps[title] = FolderView(self, title, member_names, icon)
-        self.folder_members.update(member_names)
 
     def open_app(self, name):
         if self.current_app:
@@ -649,17 +633,18 @@ class PhoneOS:
 
     def render(self):
         if self.sleeping:
-            canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), (0, 0, 0))
-            self.lcd.display(canvas)
+            draw = ImageDraw.Draw(self._canvas)
+            draw.rectangle([0, 0, SCREEN_W, SCREEN_H], fill=(0, 0, 0))
+            self.lcd.display(self._canvas)
             return
-        canvas = Image.new("RGB", (SCREEN_W, SCREEN_H), theme.bg_color())
-        draw = ImageDraw.Draw(canvas)
+        draw = ImageDraw.Draw(self._canvas)
+        draw.rectangle([0, 0, SCREEN_W, SCREEN_H], fill=theme.bg_color())
         self._draw_status_bar(draw)
         if self.locked:
             self._draw_lock_screen(draw)
         elif self.current_app:
-            self.current_app.draw(draw, canvas)
-        self.lcd.display(canvas)
+            self.current_app.draw(draw, self._canvas)
+        self.lcd.display(self._canvas)
 
     def poll_touch_raw(self):
         """Returns the current touch point every frame, or None.
@@ -681,12 +666,29 @@ class PhoneOS:
         y = max(0, min(SCREEN_H - 1, int(round(y))))
         return (x, y)
 
+    # Target refresh while something's actually happening (touch held,
+    # a touch event just fired, or the current app animates on its own
+    # clock). Idle screens redraw far less often -- IDLE_REDRAW_INTERVAL
+    # is only there to keep the status bar clock/battery%% from looking
+    # frozen, not to chase a frame rate nothing is watching. Together
+    # these matter more for "smoothness" than the render code itself:
+    # every idle frame skipped is SPI bus time and CPU handed straight
+    # back to the very next touch poll, and the sleep after an active
+    # frame only fills whatever time *wasn't* already spent rendering,
+    # instead of unconditionally tacking 50ms onto every single frame
+    # the way this loop used to.
+    ACTIVE_FRAME_INTERVAL = 1 / 30
+    IDLE_POLL_INTERVAL = 0.05
+    IDLE_REDRAW_INTERVAL = 1.0
+
     def run(self):
         self.go_home()
         if theme.get("pin_enabled") and theme.get("pin_code"):
             self.locked = True
+        last_render = 0.0
         try:
             while True:
+                frame_start = time.time()
                 raw = self.poll_touch_raw()
 
                 if self.sleeping:
@@ -694,12 +696,14 @@ class PhoneOS:
                     if raw:
                         self.wake()
                         self._last_activity = time.time()
+                        last_render = 0.0
                     self.render()
-                    time.sleep(0.05)
+                    time.sleep(self.IDLE_POLL_INTERVAL)
                     continue
 
                 was_down = self._last_touch_state
                 now_down = bool(raw)
+                touch_edge = now_down != was_down
 
                 if now_down and not was_down:
                     self._last_activity = time.time()
@@ -723,9 +727,27 @@ class PhoneOS:
                 timeout = theme.get("sleep_timeout")
                 if timeout and time.time() - self._last_activity > timeout:
                     self.enter_sleep(theme.get("brightness"))
+                    last_render = 0.0
+                    continue
 
-                self.render()
-                time.sleep(0.05)
+                animating = bool(self.current_app and
+                                 getattr(self.current_app, "wants_animation", False))
+                active = now_down or touch_edge or animating
+
+                now = time.time()
+                if active or (now - last_render) >= self.IDLE_REDRAW_INTERVAL:
+                    self.render()
+                    last_render = now
+
+                if active:
+                    elapsed = time.time() - frame_start
+                    time.sleep(max(0.0, self.ACTIVE_FRAME_INTERVAL - elapsed))
+                else:
+                    # cheap poll while nothing's happening -- still
+                    # responsive (next touch-down is felt within ~50ms)
+                    # without paying render/SPI cost for frames no one
+                    # asked for
+                    time.sleep(self.IDLE_POLL_INTERVAL)
         except KeyboardInterrupt:
             pass
         finally:
