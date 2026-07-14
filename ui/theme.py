@@ -14,7 +14,7 @@ Usage:
 import json
 import os
 
-SETTINGS_PATH = os.path.expanduser("~/.kos_settings.json")
+SETTINGS_PATH = os.path.expanduser("~/.pios_settings.json")
 
 # Each preset is a full palette so switching themes recolors the whole OS:
 # background, cards/buttons, foreground text, and the accent color used
@@ -44,9 +44,8 @@ _defaults = {
     "click_sound": True,      # UI tap feedback tone
     "clock_24h": True,        # 24h vs 12h clock everywhere
 
-    "wifi_enabled": True,          # unused since Wi-Fi is now controlled for
-    "bluetooth_enabled": False,    # real via ui/net_control -- kept only so an
-                                    # existing ~/.kos_settings.json still loads
+    "wifi_enabled": True,         # Settings > Wi-Fi/Bluetooth
+    "bluetooth_enabled": False,
 
     "pin_enabled": False,         # Settings > Security
     "pin_code": "",               # 4-digit PIN, stored in the clear locally
@@ -57,11 +56,6 @@ _defaults = {
     "wallpaper": "None",          # Settings > Wallpaper: "None" or a preset
                                    # gradient name, or "Custom Photo"
     "wallpaper_path": "",         # used when wallpaper == "Custom Photo"
-
-    "device_name": "Kos Device",  # Settings > About > Rename This Device
-
-    "airplane_mode": False,       # Quick Settings -- disables Wi-Fi + Bluetooth
-    "battery_saver": False,       # Quick Settings -- caps brightness, shortens sleep
 
     # touch calibration, written by the Calibrate Touch app. None = raw
     # driver coordinates are used as-is (the default/factory state).

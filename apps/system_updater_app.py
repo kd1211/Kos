@@ -1,7 +1,7 @@
 """
 System Updater -- checks a GitHub repo (this project's own source) for a
 newer version, downloads it as a zip, and swaps it in. Keeps exactly one
-previous version around in ~/.kos_backup so a bad update can be rolled
+previous version around in ~/.pios_backup so a bad update can be rolled
 back with one tap.
 
 Update repo layout expected (configurable below):
@@ -21,15 +21,14 @@ import tempfile
 
 from ui.framework import App, Button, SCREEN_W, SCREEN_H, STATUS_BAR_H, \
     FONT_SM, FONT_MD, FONT_LG, CARD_COLOR, ACCENT
-from ui import notifications
 
-UPDATE_REPO_OWNER = "kd1211"
-UPDATE_REPO_NAME = "Kos"
+UPDATE_REPO_OWNER = "your-github-username"
+UPDATE_REPO_NAME = "pios"
 UPDATE_REPO_BRANCH = "main"
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VERSION_FILE = os.path.join(PROJECT_ROOT, "version.txt")
-BACKUP_DIR = os.path.expanduser("~/.kos_backup")
+BACKUP_DIR = os.path.expanduser("~/.pios_backup")
 CURRENT_VERSION_DEFAULT = "0.0.0"
 
 
@@ -77,7 +76,7 @@ class SystemUpdaterApp(App):
             return
         try:
             resp = requests.get(self._raw_url("version.txt"), timeout=8,
-                                 headers={"User-Agent": "Kos/1.0"})
+                                 headers={"User-Agent": "PiOS/1.0"})
             resp.raise_for_status()
             self.remote_version = resp.text.strip()
             current = _current_version()
@@ -86,7 +85,6 @@ class SystemUpdaterApp(App):
                 self.buttons.insert(0, Button(
                     SCREEN_W // 2 - 110, STATUS_BAR_H + 80, 220, 44,
                     "Install update", self._install, font=FONT_SM))
-                notifications.post("Update available", self.status, source="System Updater")
             else:
                 self.status = f"Already up to date ({current})"
         except Exception as e:
@@ -101,7 +99,7 @@ class SystemUpdaterApp(App):
         try:
             self.status = "Downloading update..."
             resp = requests.get(self._zip_url(), timeout=30,
-                                 headers={"User-Agent": "Kos/1.0"})
+                                 headers={"User-Agent": "PiOS/1.0"})
             resp.raise_for_status()
 
             with tempfile.TemporaryDirectory() as tmp:
@@ -120,7 +118,7 @@ class SystemUpdaterApp(App):
                 if os.path.exists(BACKUP_DIR):
                     shutil.rmtree(BACKUP_DIR, ignore_errors=True)
                 shutil.copytree(PROJECT_ROOT, BACKUP_DIR,
-                                 ignore=shutil.ignore_patterns(".kos_backup"))
+                                 ignore=shutil.ignore_patterns(".pios_backup"))
 
                 # copy the new tree over the current one, file by file, so
                 # a crash partway through still leaves most of the old app intact
@@ -132,7 +130,7 @@ class SystemUpdaterApp(App):
                         shutil.copy2(os.path.join(dirpath, fname),
                                      os.path.join(dest_dir, fname))
 
-            self.status = "Update installed. Restart Kos to apply."
+            self.status = "Update installed. Restart PiOS to apply."
         except Exception as e:
             self.status = f"Update failed: {e}"
 
@@ -148,7 +146,7 @@ class SystemUpdaterApp(App):
                 for fname in filenames:
                     shutil.copy2(os.path.join(dirpath, fname),
                                  os.path.join(dest_dir, fname))
-            self.status = "Rolled back. Restart Kos to apply."
+            self.status = "Rolled back. Restart PiOS to apply."
         except Exception as e:
             self.status = f"Rollback failed: {e}"
 

@@ -2,7 +2,7 @@
 RetroArch-style emulator frontend.
 
 Real RetroArch is a native app that loads compiled libretro cores; this
-is a from-scratch, pure-Python frontend built for Kos's screen and
+is a from-scratch, pure-Python frontend built for PiOS's screen and
 touch input, but it borrows RetroArch's core ideas:
 
   - a ROM browser decoupled from any one system (emulators/core_base.py
@@ -32,8 +32,8 @@ from emulators import core_base
 from emulators import chip8_core  # noqa: F401 -- registers the CHIP-8 core
 
 ROMS_DIR = os.path.join(os.path.dirname(__file__), "..", "roms")
-STATES_DIR = os.path.expanduser("~/.kos_savestates")
-LIBRARY_FILE = os.path.expanduser("~/.kos_retroarch_library.json")
+STATES_DIR = os.path.expanduser("~/.pios_savestates")
+LIBRARY_FILE = os.path.expanduser("~/.pios_retroarch_library.json")
 
 ROW_H = 46
 PAGE_SIZE = 6
@@ -66,13 +66,6 @@ def _save_library(data):
 class EmulatorApp(App):
     name = "RetroArch"
     icon = "\U0001F579"
-
-    @property
-    def wants_animation(self):
-        # only keep the OS rendering every frame while a core is actually
-        # stepping -- sitting in the ROM picker is just as static as any
-        # other menu and shouldn't keep the display looping at full speed
-        return self.state in ("running", "quickmenu")
 
     def __init__(self, os_ref):
         super().__init__(os_ref)

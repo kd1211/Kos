@@ -11,7 +11,6 @@ class MemoryApp(App):
     icon = "\U0001F0CF"
 
     def on_open(self):
-        self.wants_animation = True
         pairs = SYMBOLS[:8] * 2
         random.shuffle(pairs)
         self.cards = pairs

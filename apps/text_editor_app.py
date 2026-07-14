@@ -10,7 +10,6 @@ import textwrap
 
 from ui.framework import App, Button, Keyboard, SCREEN_W, SCREEN_H, \
     STATUS_BAR_H, FONT_SM, FONT_MD, CARD_COLOR, FG_COLOR, ACCENT
-from ui import clipboard
 
 KEYBOARD_H = 188
 CHARS_PER_LINE = 40
@@ -47,24 +46,6 @@ class TextEditorApp(App):
             Button(86, top, 90, 30, "Save As", self._save_as, font=FONT_SM),
             Button(SCREEN_W - 96, top, 80, 30, "Home", self.os.go_home, font=FONT_SM),
         ]
-        top2 = top + 36
-        self.buttons.append(Button(10, top2, 70, 28, "Copy", self._copy_all, font=FONT_SM))
-        self.buttons.append(Button(86, top2, 70, 28, "Paste", self._paste, font=FONT_SM))
-
-    def _copy_all(self):
-        if self.content.strip():
-            clipboard.copy(self.content, source="TextEditor")
-            self.status = "Copied"
-        else:
-            self.status = "Nothing to copy"
-
-    def _paste(self):
-        text = clipboard.latest()
-        if text and len(self.content) < MAX_LEN:
-            self.content = (self.content + text)[:MAX_LEN]
-            self.status = "Pasted"
-        elif not text:
-            self.status = "Clipboard is empty"
 
     def _on_key(self, val):
         if val == "BACKSPACE":
@@ -139,7 +120,7 @@ class TextEditorApp(App):
             b.draw(draw)
 
         title = os.path.basename(self.path) if self.path else "Untitled"
-        draw.text((SCREEN_W // 2, STATUS_BAR_H + 82), title, font=FONT_SM,
+        draw.text((SCREEN_W // 2, STATUS_BAR_H + 46), title, font=FONT_SM,
                    fill=(180, 180, 190), anchor="mm")
 
         wrapped = []
@@ -147,7 +128,7 @@ class TextEditorApp(App):
             wrapped.extend(textwrap.wrap(line, CHARS_PER_LINE) or [""])
         visible = wrapped[-VISIBLE_LINES:]
 
-        text_top = STATUS_BAR_H + 98
+        text_top = STATUS_BAR_H + 62
         text_bottom = self.keyboard.y - 10
         draw.rounded_rectangle([8, text_top, SCREEN_W - 8, text_bottom], radius=8, fill=CARD_COLOR)
         y = text_top + 8
